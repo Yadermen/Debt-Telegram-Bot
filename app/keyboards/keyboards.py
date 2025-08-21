@@ -1,109 +1,239 @@
-@dp.startup()
-async def on_startup(dispatcher):
-    await init_db()
-    if not scheduler.running:
-        scheduler.start()
-    await schedule_all_reminders()
-    # Добавляем задачу проверки запланированных сообщений каждую минуту
-    scheduler.add_job(check_scheduled_messages, 'interval', minutes=1, id='check_scheduled_messages')
+"""
+Клавиатуры для бота
+"""
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from .texts import tr
+from .callbacks import CallbackData, DynamicCallbacks, ButtonNames
 
-# --- Обновлённая функция schedule_all_reminders ---
-async def schedule_all_reminders():
-    scheduler.remove_all_jobs()
-    try:
-        users = await get_all_users_with_notifications()
-    except Exception:
-        return
-    for user_info in users:
-        t = user_info.get('notify_time', None)
-        if not t:
-            continue
-        try:
-            hour, minute = map(int, t.split(':'))
-        except Exception:
-            continue
-        # id задачи уникален для каждого пользователя
-        job_id = f'notify_{user_info["user_id"]}'
-        # Удаляем старую задачу, если есть
-        try:
-            scheduler.remove_job(job_id)
-        except Exception:
-            pass
-        scheduler.add_job(send_due_reminders, 'cron', hour=hour, minute=minute, id=job_id, args=[user_info["user_id"]])
 
-# --- Функция для обработки запланированных сообщений каждую минуту ---
-async def check_scheduled_messages():
-    """Проверять запланированные сообщения каждую минуту"""
-    await process_scheduled_messages()
-
-# --- Функция для обработки запланированных сообщений ---
-async def process_scheduled_messages():
-    """Обработать все запланированные сообщения"""
-    messages = await get_pending_scheduled_messages()
-    for message in messages:
-        sent = await send_scheduled_message(message)
-        if sent:
-            await delete_scheduled_message(message['id'])
-        await asyncio.sleep(0.1)  # Небольшая задержка между отправками
-
-# --- Удаление сообщения из scheduled_messages ---
-async def delete_scheduled_message(message_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('DELETE FROM scheduled_messages WHERE id = ?', (message_id,))
-        await db.commit()
-
-# --- Главное меню (двухколоночная разметка) ---
-async def main_menu(user_id):
+async def main_menu(user_id: int) -> InlineKeyboardMarkup:
+    """Главное меню (двухколоночная разметка)"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=await tr(user_id, 'add_debt'), callback_data='add_debt'),
-         InlineKeyboardButton(text=await tr(user_id, 'my_debts'), callback_data='my_debts')],
-        [InlineKeyboardButton(text=await tr(user_id, 'clear_all'), callback_data='clear_all'),
-         InlineKeyboardButton(text=await tr(user_id, 'reminders_menu'), callback_data='reminders_menu')],
-        [InlineKeyboardButton(text=await tr(user_id, 'how_to_use_btn'), callback_data='how_to_use')],
-        [InlineKeyboardButton(text=await tr(user_id, 'change_lang'), callback_data='change_lang')]
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'add_debt'),
+                callback_data=CallbackData.ADD_DEBT
+            ),
+            InlineKeyboardButton(
+                text=await tr(user_id, 'my_debts'),
+                callback_data=CallbackData.MY_DEBTS
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'clear_all'),
+                callback_data=CallbackData.CLEAR_ALL
+            ),
+            InlineKeyboardButton(
+                text=await tr(user_id, 'reminders_menu'),
+                callback_data=CallbackData.REMINDERS_MENU
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'how_to_use_btn'),
+                callback_data=CallbackData.HOW_TO_USE
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'change_lang'),
+                callback_data=CallbackData.CHANGE_LANG
+            )
+        ]
     ])
 
-# --- Выбор языка из меню ---
-@dp.callback_query(lambda c: c.data == 'change_lang')
-async def change_lang_menu(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=LANGS['ru']['lang_ru'], callback_data='setlang_ru')],
-        [InlineKeyboardButton(text=LANGS['uz']['lang_uz'], callback_data='setlang_uz')],
-        [InlineKeyboardButton(text=await tr(user_id, 'to_menu'), callback_data='back_main')],
-    ])
-    await call.message.edit_text(await tr(user_id, 'choose_lang'), reply_markup=kb)
 
-# --- Обработчик /start ---
-
-# --- Клавиатуры ---
-async def currency_keyboard(user_id):
-    # Валюты можно оставить как есть, если не требуется перевод
+async def language_menu(user_id: int) -> InlineKeyboardMarkup:
+    """Меню выбора языка"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='USD', callback_data='cur_usd')],
-        [InlineKeyboardButton(text='UZS', callback_data='cur_uzs')],
-        [InlineKeyboardButton(text='EUR', callback_data='cur_eur')],
-    ])
-
-async def direction_keyboard(user_id):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=await tr(user_id, 'dir_gave'), callback_data='dir_gave')],
-        [InlineKeyboardButton(text=await tr(user_id, 'dir_took'), callback_data='dir_took')],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'lang_ru'),
+                callback_data=CallbackData.SETLANG_RU
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'lang_uz'),
+                callback_data=CallbackData.SETLANG_UZ
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'to_menu'),
+                callback_data=CallbackData.BACK_MAIN
+            )
+        ]
     ])
 
-async def skip_comment_keyboard(user_id):
+
+async def currency_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура выбора валюты"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=await tr(user_id, 'skip_comment'), callback_data='skip_comment')],
+        [InlineKeyboardButton(text=ButtonNames.USD, callback_data=CallbackData.CUR_USD)],
+        [InlineKeyboardButton(text=ButtonNames.UZS, callback_data=CallbackData.CUR_UZS)],
+        [InlineKeyboardButton(text=ButtonNames.EUR, callback_data=CallbackData.CUR_EUR)]
     ])
 
-async def menu_button(user_id):
+
+async def direction_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура выбора направления долга"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=await tr(user_id, 'to_menu'), callback_data='back_main')],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'dir_gave'),
+                callback_data=CallbackData.DIR_GAVE
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'dir_took'),
+                callback_data=CallbackData.DIR_TOOK
+            )
+        ]
     ])
 
-async def currency_edit_keyboard(debt_id, user_id):
+
+async def skip_comment_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура для пропуска комментария"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='USD', callback_data=f'editcur_USD_{debt_id}')],
-        [InlineKeyboardButton(text='UZS', callback_data=f'editcur_UZS_{debt_id}')],
-        [InlineKeyboardButton(text='EUR', callback_data=f'editcur_EUR_{debt_id}')],
-        [InlineKeyboardButton(text=await tr(user_id, 'to_menu'), callback_data='back_main')],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'skip_comment'),
+                callback_data=CallbackData.SKIP_COMMENT
+            )
+        ]
+    ])
+
+
+async def menu_button(user_id: int) -> InlineKeyboardMarkup:
+    """Кнопка возврата в главное меню"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'to_menu'),
+                callback_data=CallbackData.BACK_MAIN
+            )
+        ]
+    ])
+
+
+async def currency_edit_keyboard(debt_id: int, user_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура для редактирования валюты конкретного долга"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=ButtonNames.USD,
+                callback_data=DynamicCallbacks.edit_currency('USD', debt_id)
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=ButtonNames.UZS,
+                callback_data=DynamicCallbacks.edit_currency('UZS', debt_id)
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=ButtonNames.EUR,
+                callback_data=DynamicCallbacks.edit_currency('EUR', debt_id)
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'to_menu'),
+                callback_data=CallbackData.BACK_MAIN
+            )
+        ]
+    ])
+
+
+async def debt_actions_keyboard(debt_id: int, user_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура действий с долгом"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'edit'),
+                callback_data=DynamicCallbacks.debt_action('edit', debt_id)
+            ),
+            InlineKeyboardButton(
+                text=await tr(user_id, 'close'),
+                callback_data=DynamicCallbacks.debt_action('close', debt_id)
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'extend'),
+                callback_data=DynamicCallbacks.debt_action('extend', debt_id)
+            ),
+            InlineKeyboardButton(
+                text=await tr(user_id, 'delete'),
+                callback_data=DynamicCallbacks.debt_action('delete', debt_id)
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'to_list'),
+                callback_data=CallbackData.MY_DEBTS
+            )
+        ]
+    ])
+
+
+async def confirm_keyboard(action: str, debt_id: int, user_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения действия"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'yes'),
+                callback_data=DynamicCallbacks.confirm_action(action, debt_id)
+            ),
+            InlineKeyboardButton(
+                text=await tr(user_id, 'no'),
+                callback_data=CallbackData.BACK
+            )
+        ]
+    ])
+
+
+async def edit_fields_keyboard(debt_id: int, user_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура для выбора поля редактирования"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'editfield_person_btn'),
+                callback_data=DynamicCallbacks.edit_field('person', debt_id)
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'editfield_amount_btn'),
+                callback_data=DynamicCallbacks.edit_field('amount', debt_id)
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'editfield_currency_btn'),
+                callback_data=DynamicCallbacks.edit_field('currency', debt_id)
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'editfield_due_btn'),
+                callback_data=DynamicCallbacks.edit_field('due', debt_id)
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'editfield_comment_btn'),
+                callback_data=DynamicCallbacks.edit_field('comment', debt_id)
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'back'),
+                callback_data=DynamicCallbacks.debt_action('view', debt_id)
+            )
+        ]
+    ])
