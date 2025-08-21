@@ -6,21 +6,20 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 from datetime import datetime, timedelta
 import re
-import html
 
-from database import (
+from ..database import (
     add_debt, get_open_debts, get_debt_by_id, update_debt,
     soft_delete_debt, clear_user_debts, get_user_data, delete_debt
 )
-from keyboards import (
+from ..keyboards import (
     tr, main_menu, currency_keyboard, direction_keyboard,
     skip_comment_keyboard, menu_button, debt_actions_keyboard,
     confirm_keyboard, edit_fields_keyboard, currency_edit_keyboard,
     CallbackData, DynamicCallbacks, debts_list_keyboard_paginated,
     debts_list_keyboard, safe_str
 )
-from states import AddDebt, EditDebt
-from utils import safe_edit_message
+from ..states import AddDebt, EditDebt
+from ..utils import safe_edit_message
 
 router = Router()
 

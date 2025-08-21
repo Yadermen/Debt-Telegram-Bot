@@ -1,73 +1,168 @@
+"""
+Планировщик задач для уведомлений и рассылок
+"""
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import pytz
+from ..database import get_all_users, get_due_debts, get_user_data
+from ..keyboards import tr
+from ..database.models import safe_str
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-import asyncio
-from typing import Dict, Any
-from aiogram.exceptions import TelegramAPIError
-
-from database import get_due_debts, mark_message_as_sent
+# Создаем глобальный планировщик
+scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Tashkent'))
 
 
 async def send_due_reminders(user_id: int):
-    """Отправить напоминания о просроченных долгах"""
+    """Отправить напоминания о долгах пользователю"""
+    from bot import bot
+
     try:
-        from bot import bot  # Импортируем бота
+        user_data = await get_user_data(user_id)
+    except Exception:
+        return
 
-        # Получаем долги, которые истекают сегодня (0 дней)
-        due_debts = await get_due_debts(user_id, 0)
+    notify_time = user_data.get('notify_time', '09:00')
 
-        if not due_debts:
-            return
+    # Долги, срок которых истекает завтра
+    try:
+        tomorrow_debts = await get_due_debts(user_id, 1)
+    except Exception:
+        tomorrow_debts = []
 
-        # Формируем сообщение с напоминанием
-        reminder_text = "🔔 <b>Напоминание о долгах!</b>\n\n"
-        reminder_text += f"Сегодня истекает срок по {len(due_debts)} долг(ам):\n\n"
+    for debt in tomorrow_debts:
+        text = await tr(
+            user_id, 'debt_card',
+            person=safe_str(debt['person']),
+            amount=safe_str(debt['amount']),
+            currency=safe_str(debt.get('currency', 'UZS')),
+            due=safe_str(debt['due']),
+            comment=safe_str(debt['comment']),
+            notify_time=safe_str(notify_time)
+        )
+        try:
+            kb = await reminder_debt_actions(debt['id'], 0, user_id)
+            await bot.send_message(user_id, text, reply_markup=kb)
+        except Exception:
+            pass
 
-        for debt in due_debts:
-            direction_text = "💰 Вам должны" if debt['direction'] == 'owed' else "⚠️ Вы должны"
-            reminder_text += f"{direction_text} <b>{debt['person']}</b>\n"
-            reminder_text += f"Сумма: {debt['amount']} {debt['currency']}\n"
-            if debt['comment']:
-                reminder_text += f"Комментарий: {debt['comment']}\n"
-            reminder_text += "\n"
+    # Долги, срок которых истекает сегодня
+    try:
+        today_debts = await get_due_debts(user_id, 0)
+    except Exception:
+        today_debts = []
 
-        await bot.send_message(user_id, reminder_text, parse_mode='HTML')
+    for debt in today_debts:
+        text = await tr(
+            user_id, 'debt_card',
+            person=safe_str(debt['person']),
+            amount=safe_str(debt['amount']),
+            currency=safe_str(debt.get('currency', 'UZS')),
+            due=safe_str(debt['due']),
+            comment=safe_str(debt['comment']),
+            notify_time=safe_str(notify_time)
+        )
+        try:
+            kb = await reminder_debt_actions(debt['id'], 0, user_id)
+            await bot.send_message(user_id, text, reply_markup=kb)
+        except Exception:
+            pass
+
+
+async def reminder_debt_actions(debt_id: int, page: int, user_id: int) -> InlineKeyboardMarkup:
+    """Кнопки для карточки долга в напоминаниях"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=await tr(user_id, 'edit'),
+            callback_data=f'edit_{debt_id}_{page}'
+        )],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'close'),
+                callback_data=f'close_{debt_id}_{page}'
+            ),
+            InlineKeyboardButton(
+                text=await tr(user_id, 'extend'),
+                callback_data=f'extend_{debt_id}_{page}'
+            ),
+            InlineKeyboardButton(
+                text=await tr(user_id, 'delete'),
+                callback_data=f'del_{debt_id}_{page}'
+            )
+        ],
+        [InlineKeyboardButton(
+            text=await tr(user_id, 'to_menu'),
+            callback_data='back_main'
+        )]
+    ])
+
+
+async def schedule_all_reminders():
+    """Запланировать напоминания для всех пользователей"""
+    try:
+        # Очищаем существующие задачи напоминаний
+        for job in scheduler.get_jobs():
+            if job.id.startswith('reminder_'):
+                job.remove()
+
+        # Получаем всех пользователей
+        users = await get_all_users()
+
+        for user in users:
+            user_id = user['user_id']
+            notify_time = user.get('notify_time', '09:00')
+
+            # Парсим время
+            try:
+                hour, minute = map(int, notify_time.split(':'))
+            except ValueError:
+                hour, minute = 9, 0  # Значение по умолчанию
+
+            # Добавляем задачу для каждого пользователя
+            scheduler.add_job(
+                send_due_reminders,
+                'cron',
+                hour=hour,
+                minute=minute,
+                args=[user_id],
+                id=f'reminder_{user_id}',
+                replace_existing=True
+            )
+
+        print(f"✅ Запланировано напоминаний для {len(users)} пользователей")
 
     except Exception as e:
-        print(f"❌ Ошибка отправки напоминания пользователю {user_id}: {e}")
+        print(f"❌ Ошибка при планировании напоминаний: {e}")
 
 
-async def send_scheduled_message(message: Dict[str, Any]) -> bool:
-    """Отправить запланированное сообщение"""
+async def schedule_user_reminder(user_id: int, notify_time: str):
+    """Запланировать напоминание для конкретного пользователя"""
     try:
-        from bot import bot  # Импортируем бота
+        # Парсим время
+        hour, minute = map(int, notify_time.split(':'))
 
-        user_id = message['user_id']
-        text = message['text']
-        photo_id = message.get('photo_id')
+        # Добавляем или обновляем задачу
+        scheduler.add_job(
+            send_due_reminders,
+            'cron',
+            hour=hour,
+            minute=minute,
+            args=[user_id],
+            id=f'reminder_{user_id}',
+            replace_existing=True
+        )
 
-        if photo_id:
-            # Отправляем сообщение с фото
-            await bot.send_photo(
-                chat_id=user_id,
-                photo=photo_id,
-                caption=text,
-                parse_mode='HTML'
-            )
-        else:
-            # Отправляем текстовое сообщение
-            await bot.send_message(
-                chat_id=user_id,
-                text=text,
-                parse_mode='HTML'
-            )
+        print(f"✅ Напоминание для пользователя {user_id} запланировано на {notify_time}")
 
-        # Помечаем сообщение как отправленное
-        await mark_message_as_sent(message['id'])
-
-        return True
-
-    except TelegramAPIError as e:
-        print(f"❌ Telegram API ошибка при отправке сообщения {message['id']}: {e}")
-        return False
     except Exception as e:
-        print(f"❌ Общая ошибка при отправке сообщения {message['id']}: {e}")
-        return False
+        print(f"❌ Ошибка при планировании напоминания для {user_id}: {e}")
+
+
+def remove_user_reminder(user_id: int):
+    """Удалить напоминание пользователя"""
+    try:
+        job = scheduler.get_job(f'reminder_{user_id}')
+        if job:
+            job.remove()
+            print(f"✅ Напоминание для пользователя {user_id} удалено")
+    except Exception as e:
+        print(f"❌ Ошибка при удалении напоминания для {user_id}: {e}")

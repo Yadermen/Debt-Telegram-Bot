@@ -6,9 +6,9 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
-from database import get_user_data, get_user_by_id, save_user_lang, get_or_create_user
-from keyboards import tr, LANGS, main_menu, language_menu, CallbackData
-from utils import safe_edit_message
+from ..database import get_user_data, get_user_by_id, save_user_lang, get_or_create_user
+from ..keyboards import tr, LANGS, main_menu, language_menu, CallbackData
+from ..utils import safe_edit_message
 
 router = Router()
 

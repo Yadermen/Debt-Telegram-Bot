@@ -1,4 +1,4 @@
-from sqlalchemy.orm import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update, and_, func
 from typing import Optional, List, Dict, Any
