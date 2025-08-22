@@ -24,4 +24,9 @@ class AdminBroadcast(StatesGroup):
     waiting_for_schedule_time = State()
 
 
-__all__ = ['AddDebt', 'EditDebt', 'AdminBroadcast']
+class SetNotifyTime(StatesGroup):
+    """Состояния для установки времени уведомлений"""
+    waiting_for_time = State()
+
+
+__all__ = ['AddDebt', 'EditDebt', 'AdminBroadcast', 'SetNotifyTime']

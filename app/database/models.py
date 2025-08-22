@@ -49,8 +49,14 @@ class ScheduledMessage(Base):
     photo_id = Column(String, nullable=True)
     schedule_time = Column(String, nullable=False)
     sent = Column(Boolean, default=False)
-    is_active = Column(Boolean, default=True)  # Для soft delete
+    is_active = Column(Boolean, default=True) 
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
     user = relationship("User", back_populates="scheduled_messages")
+
+def safe_str(value):
+    """Безопасное преобразование в строку"""
+    if value is None:
+        return ""
+    return str(value)

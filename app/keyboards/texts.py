@@ -1,5 +1,4 @@
-
-from database.crud import get_user_data
+from ..database.crud import get_user_data
 
 LANGS = {
     'ru': {

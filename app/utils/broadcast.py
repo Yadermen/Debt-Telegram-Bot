@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime
 from typing import List, Tuple
 
-from database import (
+from ..database import (
     get_all_users, save_scheduled_message,
     get_pending_scheduled_messages, delete_scheduled_message
 )

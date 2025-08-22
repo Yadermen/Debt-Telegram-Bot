@@ -7,11 +7,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 import re
 
-from database import get_user_data, save_user_notify_time
-from keyboards import tr
-from states import SetNotifyTime
-from utils import safe_edit_message
-from utils.scheduler import schedule_all_reminders
+# Заменить все импорты в начале файла на:
+from app.database import get_user_data, save_user_notify_time
+from app.keyboards import tr
+from app.states import SetNotifyTime
+from app.utils import safe_edit_message
+from app.utils.scheduler import schedule_all_reminders
 
 router = Router()
 
