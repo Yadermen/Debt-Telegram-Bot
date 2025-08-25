@@ -62,7 +62,31 @@ async def show_debts_simple(call: CallbackQuery, state: FSMContext):
     await safe_edit_message(call, text, markup)
 
 
+# === НАВИГАЦИЯ ПО СТРАНИЦАМ ===
+@router.callback_query(lambda c: c.data.startswith('debts_page_'))
+async def debts_page_navigation(call: CallbackQuery, state: FSMContext):
+    """Навигация по страницам долгов"""
+    try:
+        page = int(call.data.split('_')[2])
+    except Exception:
+        page = 0
 
+    user_id = call.from_user.id
+    try:
+        debts = await get_open_debts(user_id)
+    except Exception:
+        await call.message.answer(await tr(user_id, 'db_error'))
+        return
+
+    if not debts:
+        text = await tr(user_id, 'no_debts')
+        markup = await main_menu(user_id)
+        await safe_edit_message(call, text, markup)
+        return
+
+    text = await tr(user_id, 'your_debts')
+    markup = await debts_list_keyboard_paginated(debts, user_id, page=page)
+    await safe_edit_message(call, text, markup)
 
 
 async def show_debt_card(user_id, debt_id):
@@ -300,15 +324,22 @@ async def del_debt(call: CallbackQuery, state: FSMContext):
         await call.message.answer(await tr(call.from_user.id, 'delete_error'))
         return
 
+    # Получаем обновленный список долгов
     try:
         debts = await get_open_debts(user_id)
     except Exception:
         debts = []
 
-    await call.message.edit_text(
-        await tr(user_id, 'debt_deleted'),
-        reply_markup=await debts_list_keyboard_paginated(debts, user_id, page=page)
-    )
+    if not debts:
+        # Если долгов больше нет, возвращаем в главное меню
+        text = await tr(user_id, 'debt_deleted')
+        markup = await main_menu(user_id)
+        await safe_edit_message(call, text, markup)
+    else:
+        # Если долги есть, показываем список с сообщением об удалении
+        text = await tr(user_id, 'debt_deleted') + '\n\n' + await tr(user_id, 'your_debts')
+        markup = await debts_list_keyboard_paginated(debts, user_id, page=page)
+        await safe_edit_message(call, text, markup)
 
 
 # === ЗАКРЫТИЕ ДОЛГОВ ===
@@ -905,7 +936,7 @@ async def add_debt_amount_extended(message: Message, state: FSMContext):
         amount_text = message.text.strip()
 
         # Проверяем, что введено число
-        if not re.match(r'^\d+$', amount_text):
+        if not re.match(r'^\d+, amount_text'):
             error_text = await tr(user_id, 'amount_wrong')
             await message.answer(error_text)
             return
@@ -938,7 +969,7 @@ async def add_debt_due_extended(message: Message, state: FSMContext):
         due_text = message.text.strip()
 
         # Проверяем формат даты YYYY-MM-DD
-        if not re.match(r'^\d{4}-\d{2}-\d{2}$', due_text):
+        if not re.match(r'^\d{4}-\d{2}-\d{2}, due_text'):
             suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
             error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
             await message.answer(error_text)

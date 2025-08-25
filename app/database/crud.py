@@ -43,11 +43,15 @@ async def get_user_data(user_id: int) -> Dict[str, Any]:
         }
 
 
-async def get_or_create_user(user_id: int, session: AsyncSession = None) -> User:
+async def get_or_create_user(
+    user_id: int,
+    session: AsyncSession = None,
+    default_lang: str = "ru"
+) -> User:
     """Получить пользователя или создать если не существует"""
     if session is None:
         async with get_db() as session:
-            return await get_or_create_user(user_id, session)
+            return await get_or_create_user(user_id, session, default_lang=default_lang)
 
     # Ищем пользователя
     result = await session.execute(
@@ -57,11 +61,12 @@ async def get_or_create_user(user_id: int, session: AsyncSession = None) -> User
 
     if not user:
         # Создаем нового пользователя
-        user = User(user_id=user_id, lang='ru', notify_time='09:00')
+        user = User(user_id=user_id, lang=default_lang, notify_time='09:00')
         session.add(user)
         await session.flush()  # Чтобы получить ID
 
     return user
+
 
 
 async def save_user_lang(user_id: int, lang: str) -> None:
