@@ -2,11 +2,12 @@
 Инициализация всех хендлеров
 """
 from aiogram import Dispatcher
-from . import start, debt, instructions, reminders
+from . import start, debt, instructions, reminders, admin
 
 def register_all_handlers(dp: Dispatcher):
     """Регистрация всех роутеров"""
     # Порядок важен! Более специфичные хендлеры должны идти первыми
+    dp.include_router(admin.router)  # Админ хендлеры первыми
     dp.include_router(start.router)
     dp.include_router(debt.router)
     dp.include_router(instructions.router)

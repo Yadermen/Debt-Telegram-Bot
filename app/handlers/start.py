@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from ..database import get_user_data, get_user_by_id, save_user_lang, get_or_create_user
 from ..keyboards import tr, LANGS, main_menu, CallbackData
 from ..utils import safe_edit_message
+from ..states import AddDebt, EditDebt, SetNotifyTime, AdminBroadcast
 
 router = Router()
 
@@ -37,6 +38,48 @@ async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
 
     try:
+        # Получаем текущее состояние пользователя
+        current_state = await state.get_state()
+
+        # Если пользователь находится в процессе добавления/редактирования долга
+        if current_state:
+            # Предупреждаем о прерывании процесса
+            if isinstance(current_state, str) and (
+                current_state.startswith('AddDebt:') or
+                current_state.startswith('EditDebt:') or
+                current_state.startswith('SetNotifyTime:') or
+                current_state.startswith('AdminBroadcast:')
+            ):
+
+                # Создаем клавиатуру с выбором
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text=await tr(user_id, 'continue_process'),
+                        callback_data='continue_current_process'
+                    )],
+                    [InlineKeyboardButton(
+                        text=await tr(user_id, 'cancel_and_menu'),
+                        callback_data='cancel_and_go_menu'
+                    )]
+                ])
+
+                process_name = await tr(user_id, 'process_unknown')
+                if 'AddDebt:' in current_state:
+                    process_name = await tr(user_id, 'process_add_debt')
+                elif 'EditDebt:' in current_state:
+                    process_name = await tr(user_id, 'process_edit_debt')
+                elif 'SetNotifyTime:' in current_state:
+                    process_name = await tr(user_id, 'process_set_time')
+                elif 'AdminBroadcast:' in current_state:
+                    process_name = await tr(user_id, 'process_broadcast')
+
+                warning_text = await tr(user_id, 'process_interrupted', process=process_name)
+                await message.answer(warning_text, reply_markup=kb)
+                return
+
+        # Очищаем состояние, если дошли сюда
+        await state.clear()
+
         # Проверяем, существует ли пользователь
         user = await get_user_by_id(user_id)
 
@@ -72,6 +115,69 @@ async def cmd_start(message: Message, state: FSMContext):
 """
         kb = await language_menu_start(user_id)
         await message.answer(welcome_text, reply_markup=kb)
+
+
+@router.callback_query(lambda c: c.data == 'continue_current_process')
+async def continue_current_process(call: CallbackQuery, state: FSMContext):
+    """Продолжить текущий процесс"""
+    user_id = call.from_user.id
+    current_state = await state.get_state()
+
+    if not current_state:
+        # Если состояние потерялось, переходим в меню
+        text = await tr(user_id, 'process_lost')
+        markup = await main_menu(user_id)
+        await safe_edit_message(call, text, markup)
+        return
+
+    # Показываем подсказку в зависимости от состояния
+    if 'AddDebt:person' in current_state:
+        text = await tr(user_id, 'person')
+    elif 'AddDebt:currency' in current_state:
+        text = await tr(user_id, 'currency')
+        from ..keyboards import currency_keyboard
+        markup = await currency_keyboard(user_id)
+        await safe_edit_message(call, text, markup)
+        return
+    elif 'AddDebt:amount' in current_state:
+        text = await tr(user_id, 'amount')
+    elif 'AddDebt:due' in current_state:
+        from datetime import datetime, timedelta
+        suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
+        text = await tr(user_id, 'due', suggest_date=suggest_date)
+    elif 'AddDebt:direction' in current_state:
+        text = await tr(user_id, 'direction')
+        from ..keyboards import direction_keyboard
+        markup = await direction_keyboard(user_id)
+        await safe_edit_message(call, text, markup)
+        return
+    elif 'AddDebt:comment' in current_state:
+        text = await tr(user_id, 'comment')
+        from ..keyboards import skip_comment_keyboard
+        markup = await skip_comment_keyboard(user_id)
+        await safe_edit_message(call, text, markup)
+        return
+    elif 'EditDebt:' in current_state:
+        text = await tr(user_id, 'continue_edit')
+    elif 'SetNotifyTime:' in current_state:
+        text = await tr(user_id, 'notify_time')
+    else:
+        text = await tr(user_id, 'continue_process_hint')
+
+    from ..keyboards import menu_button
+    markup = await menu_button(user_id)
+    await safe_edit_message(call, text, markup)
+
+
+@router.callback_query(lambda c: c.data == 'cancel_and_go_menu')
+async def cancel_and_go_menu(call: CallbackQuery, state: FSMContext):
+    """Отменить процесс и перейти в меню"""
+    user_id = call.from_user.id
+    await state.clear()
+
+    text = await tr(user_id, 'process_cancelled')
+    markup = await main_menu(user_id)
+    await safe_edit_message(call, text, markup)
 
 
 async def language_menu_settings(user_id: int) -> InlineKeyboardMarkup:

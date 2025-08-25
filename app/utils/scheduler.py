@@ -1,168 +1,172 @@
 """
-Планировщик задач для уведомлений и рассылок
+Планировщик напоминаний
 """
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import pytz
-from ..database import get_all_users, get_due_debts, get_user_data
-from ..keyboards import tr
-from ..database.models import safe_str
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-# Создаем глобальный планировщик
-scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Tashkent'))
+from datetime import datetime, timedelta
+import asyncio
 
 
-async def send_due_reminders(user_id: int):
-    """Отправить напоминания о долгах пользователю"""
-    from bot import bot
+class ReminderScheduler:
+    def __init__(self):
+        self.scheduler = AsyncIOScheduler(timezone='Asia/Tashkent')
+        self.bot = None
+        self.started = False
 
-    try:
-        user_data = await get_user_data(user_id)
-    except Exception:
-        return
+    def set_bot(self, bot):
+        """Установить экземпляр бота"""
+        self.bot = bot
 
-    notify_time = user_data.get('notify_time', '09:00')
+    async def start(self):
+        """Запустить планировщик"""
+        if not self.started:
+            self.scheduler.start()
+            self.started = True
+            print("✅ Планировщик напоминаний запущен")
 
-    # Долги, срок которых истекает завтра
-    try:
-        tomorrow_debts = await get_due_debts(user_id, 1)
-    except Exception:
-        tomorrow_debts = []
+    async def stop(self):
+        """Остановить планировщик"""
+        if self.started:
+            self.scheduler.shutdown()
+            self.started = False
+            print("🔴 Планировщик напоминаний остановлен")
 
-    for debt in tomorrow_debts:
-        text = await tr(
-            user_id, 'debt_card',
-            person=safe_str(debt['person']),
-            amount=safe_str(debt['amount']),
-            currency=safe_str(debt.get('currency', 'UZS')),
-            due=safe_str(debt['due']),
-            comment=safe_str(debt['comment']),
-            notify_time=safe_str(notify_time)
-        )
+    async def send_due_reminders(self):
+        """Отправить напоминания о просроченных долгах"""
+        if not self.bot:
+            print("❌ Bot не установлен в scheduler")
+            return
+
         try:
-            kb = await reminder_debt_actions(debt['id'], 0, user_id)
-            await bot.send_message(user_id, text, reply_markup=kb)
-        except Exception:
-            pass
+            # Импортируем здесь, чтобы избежать циклических импортов
+            from app.database import get_due_debts_for_reminders, get_user_data
+            from app.keyboards import tr, safe_str
 
-    # Долги, срок которых истекает сегодня
-    try:
-        today_debts = await get_due_debts(user_id, 0)
-    except Exception:
-        today_debts = []
+            print("📅 Проверка просроченных долгов...")
 
-    for debt in today_debts:
-        text = await tr(
-            user_id, 'debt_card',
-            person=safe_str(debt['person']),
-            amount=safe_str(debt['amount']),
-            currency=safe_str(debt.get('currency', 'UZS')),
-            due=safe_str(debt['due']),
-            comment=safe_str(debt['comment']),
-            notify_time=safe_str(notify_time)
-        )
+            # Получаем долги, которые просрочены или просрочиваются сегодня
+            today = datetime.now().strftime('%Y-%m-%d')
+            due_debts = await get_due_debts_for_reminders(today)
+
+            if not due_debts:
+                print("✅ Просроченных долгов нет")
+                return
+
+            print(f"📋 Найдено {len(due_debts)} просроченных долгов")
+
+            # Группируем долги по пользователям
+            user_debts = {}
+            for debt in due_debts:
+                user_id = debt['user_id']
+                if user_id not in user_debts:
+                    user_debts[user_id] = []
+                user_debts[user_id].append(debt)
+
+            # Отправляем напоминания каждому пользователю
+            for user_id, debts in user_debts.items():
+                try:
+                    await self._send_user_reminder(user_id, debts)
+                    print(f"✅ Напоминание отправлено пользователю {user_id}")
+                except Exception as e:
+                    print(f"❌ Ошибка отправки напоминания пользователю {user_id}: {e}")
+
+        except Exception as e:
+            print(f"❌ Ошибка в send_due_reminders: {e}")
+
+    async def _send_user_reminder(self, user_id: int, debts: list):
+        """Отправить напоминание конкретному пользователю"""
         try:
-            kb = await reminder_debt_actions(debt['id'], 0, user_id)
-            await bot.send_message(user_id, text, reply_markup=kb)
-        except Exception:
-            pass
+            from app.keyboards import tr, main_menu
 
+            if len(debts) == 1:
+                debt = debts[0]
+                text = await tr(user_id, 'single_reminder',
+                              person=safe_str(debt['person']),
+                              amount=safe_str(debt['amount']),
+                              currency=safe_str(debt.get('currency', 'UZS')),
+                              due=safe_str(debt['due']))
+            else:
+                text = await tr(user_id, 'multiple_reminders', count=len(debts))
+                for debt in debts:
+                    text += f"\n• {safe_str(debt['person'])}: {safe_str(debt['amount'])} {safe_str(debt.get('currency', 'UZS'))}"
 
-async def reminder_debt_actions(debt_id: int, page: int, user_id: int) -> InlineKeyboardMarkup:
-    """Кнопки для карточки долга в напоминаниях"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'edit'),
-            callback_data=f'edit_{debt_id}_{page}'
-        )],
-        [
-            InlineKeyboardButton(
-                text=await tr(user_id, 'close'),
-                callback_data=f'close_{debt_id}_{page}'
-            ),
-            InlineKeyboardButton(
-                text=await tr(user_id, 'extend'),
-                callback_data=f'extend_{debt_id}_{page}'
-            ),
-            InlineKeyboardButton(
-                text=await tr(user_id, 'delete'),
-                callback_data=f'del_{debt_id}_{page}'
-            )
-        ],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'to_menu'),
-            callback_data='back_main'
-        )]
-    ])
+            kb = await main_menu(user_id)
+            await self.bot.send_message(user_id, text, reply_markup=kb)
 
+        except Exception as e:
+            print(f"❌ Ошибка отправки напоминания пользователю {user_id}: {e}")
 
-async def schedule_all_reminders():
-    """Запланировать напоминания для всех пользователей"""
-    try:
-        # Очищаем существующие задачи напоминаний
-        for job in scheduler.get_jobs():
-            if job.id.startswith('reminder_'):
-                job.remove()
+    async def schedule_all_reminders(self):
+        """Запланировать все напоминания для пользователей"""
+        try:
+            from app.database import get_all_users
 
-        # Получаем всех пользователей
-        users = await get_all_users()
+            users = await get_all_users()
 
-        for user in users:
-            user_id = user['user_id']
-            notify_time = user.get('notify_time', '09:00')
+            # Очищаем старые задачи напоминаний
+            for job in self.scheduler.get_jobs():
+                if job.id == 'send_due_reminders':
+                    job.remove()
 
-            # Парсим время
-            try:
-                hour, minute = map(int, notify_time.split(':'))
-            except ValueError:
-                hour, minute = 9, 0  # Значение по умолчанию
-
-            # Добавляем задачу для каждого пользователя
-            scheduler.add_job(
-                send_due_reminders,
+            # Создаем единую задачу на каждый час для проверки напоминаний
+            self.scheduler.add_job(
+                self.send_due_reminders,
                 'cron',
-                hour=hour,
-                minute=minute,
-                args=[user_id],
-                id=f'reminder_{user_id}',
-                replace_existing=True
+                hour='*',  # Каждый час
+                minute=0,
+                id='send_due_reminders'
             )
 
-        print(f"✅ Запланировано напоминаний для {len(users)} пользователей")
+            print(f"✅ Запланированы напоминания для {len(users)} пользователей")
 
-    except Exception as e:
-        print(f"❌ Ошибка при планировании напоминаний: {e}")
+        except Exception as e:
+            print(f"❌ Ошибка планирования напоминаний: {e}")
+
+    async def send_broadcast_to_all_users(self, text: str, photo_id: str = None, admin_id: int = None):
+        """Отправить рассылку всем пользователям"""
+        if not self.bot:
+            return 0, 0, []
+
+        try:
+            from app.database import get_all_users
+
+            users = await get_all_users()
+            success_count = 0
+            error_count = 0
+            blocked_users = []
+
+            for user in users:
+                user_id = user['user_id']
+                try:
+                    if photo_id:
+                        await self.bot.send_photo(user_id, photo_id, caption=text)
+                    else:
+                        await self.bot.send_message(user_id, text)
+                    success_count += 1
+                except Exception as e:
+                    error_count += 1
+                    blocked_users.append(user_id)
+                    print(f"❌ Ошибка отправки пользователю {user_id}: {e}")
+
+                # Небольшая задержка между отправками
+                await asyncio.sleep(0.05)
+
+            return success_count, error_count, blocked_users
+
+        except Exception as e:
+            print(f"❌ Ошибка в send_broadcast_to_all_users: {e}")
+            return 0, 0, []
+
+    async def send_scheduled_broadcast_with_stats(self, text: str, photo_id: str = None, admin_id: int = None):
+        """Отправить запланированную рассылку со статистикой"""
+        success, errors, blocked = await self.send_broadcast_to_all_users(text, photo_id, admin_id)
+
+        if admin_id:
+            try:
+                stats_text = f"📢 Рассылка завершена!\n\n✅ Отправлено: {success}\n❌ Ошибок: {errors}"
+                await self.bot.send_message(admin_id, stats_text)
+            except Exception as e:
+                print(f"❌ Ошибка отправки статистики админу {admin_id}: {e}")
 
 
-async def schedule_user_reminder(user_id: int, notify_time: str):
-    """Запланировать напоминание для конкретного пользователя"""
-    try:
-        # Парсим время
-        hour, minute = map(int, notify_time.split(':'))
-
-        # Добавляем или обновляем задачу
-        scheduler.add_job(
-            send_due_reminders,
-            'cron',
-            hour=hour,
-            minute=minute,
-            args=[user_id],
-            id=f'reminder_{user_id}',
-            replace_existing=True
-        )
-
-        print(f"✅ Напоминание для пользователя {user_id} запланировано на {notify_time}")
-
-    except Exception as e:
-        print(f"❌ Ошибка при планировании напоминания для {user_id}: {e}")
-
-
-def remove_user_reminder(user_id: int):
-    """Удалить напоминание пользователя"""
-    try:
-        job = scheduler.get_job(f'reminder_{user_id}')
-        if job:
-            job.remove()
-            print(f"✅ Напоминание для пользователя {user_id} удалено")
-    except Exception as e:
-        print(f"❌ Ошибка при удалении напоминания для {user_id}: {e}")
+# Создаем глобальный экземпляр планировщика
+scheduler = ReminderScheduler()
