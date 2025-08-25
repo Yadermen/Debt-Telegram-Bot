@@ -68,6 +68,53 @@ async def get_or_create_user(
     return user
 
 
+async def get_due_debts_for_reminders(today_date: str):
+    """
+    Получить долги для напоминаний (просроченные или истекающие сегодня)
+
+    Args:
+        today_date: Текущая дата в формате 'YYYY-MM-DD'
+
+    Returns:
+        List[dict]: Список долгов с полями user_id, person, amount, currency, due, direction
+    """
+    try:
+        async with get_db() as db:
+            cursor = await db.execute("""
+                SELECT 
+                    user_id, 
+                    person, 
+                    amount, 
+                    currency, 
+                    due, 
+                    direction,
+                    comment
+                FROM debts 
+                WHERE closed = 0 
+                AND due <= ? 
+                ORDER BY due ASC, user_id
+            """, (today_date,))
+
+            rows = await cursor.fetchall()
+
+            # Преобразуем в список словарей
+            debts = []
+            for row in rows:
+                debts.append({
+                    'user_id': row[0],
+                    'person': row[1],
+                    'amount': row[2],
+                    'currency': row[3] if row[3] else 'UZS',
+                    'due': row[4],
+                    'direction': row[5] if row[5] else 'owed',
+                    'comment': row[6] if row[6] else ''
+                })
+
+            return debts
+
+    except Exception as e:
+        print(f"❌ Ошибка получения долгов для напоминаний: {e}")
+        return []
 
 async def save_user_lang(user_id: int, lang: str) -> None:
     """Сохранить язык пользователя"""

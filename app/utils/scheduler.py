@@ -11,6 +11,7 @@ class ReminderScheduler:
         self.scheduler = AsyncIOScheduler(timezone='Asia/Tashkent')
         self.bot = None
         self.started = False
+        self.running = False
 
     def set_bot(self, bot):
         """Установить экземпляр бота"""
@@ -21,6 +22,7 @@ class ReminderScheduler:
         if not self.started:
             self.scheduler.start()
             self.started = True
+            self.running = True
             print("✅ Планировщик напоминаний запущен")
 
     async def stop(self):
@@ -28,6 +30,7 @@ class ReminderScheduler:
         if self.started:
             self.scheduler.shutdown()
             self.started = False
+            self.running = False
             print("🔴 Планировщик напоминаний остановлен")
 
     async def send_due_reminders(self):
@@ -37,7 +40,6 @@ class ReminderScheduler:
             return
 
         try:
-            # Импортируем здесь, чтобы избежать циклических импортов
             from app.database import get_due_debts_for_reminders, get_user_data
             from app.keyboards import tr, safe_str
 
@@ -72,10 +74,77 @@ class ReminderScheduler:
         except Exception as e:
             print(f"❌ Ошибка в send_due_reminders: {e}")
 
+    async def send_daily_reminders(self, user_id: int):
+        """
+        Отправить ежедневные напоминания конкретному пользователю
+        """
+        if not self.bot:
+            print("❌ Bot не установлен в scheduler")
+            return
+
+        try:
+            from app.database import get_open_debts
+            from app.keyboards import tr, safe_str
+
+            # Получаем долги пользователя
+            debts = await get_open_debts(user_id)
+
+            if not debts:
+                return
+
+            # Фильтруем долги, которые скоро истекают (в течение 3 дней)
+            today = datetime.now().date()
+            upcoming_debts = []
+
+            for debt in debts:
+                try:
+                    due_date = datetime.strptime(debt['due'], '%Y-%m-%d').date()
+                    days_left = (due_date - today).days
+
+                    if days_left <= 3:  # Напоминаем за 3 дня и менее
+                        upcoming_debts.append((debt, days_left))
+                except:
+                    continue
+
+            if not upcoming_debts:
+                return
+
+            # Формируем сообщение
+            message_lines = [await tr(user_id, 'daily_reminder_header')]
+
+            for debt, days_left in upcoming_debts:
+                direction = debt.get('direction', 'owed')
+
+                if days_left < 0:
+                    status_text = await tr(user_id, 'overdue', days=abs(days_left))
+                elif days_left == 0:
+                    status_text = await tr(user_id, 'due_today')
+                else:
+                    status_text = await tr(user_id, 'due_in_days', days=days_left)
+
+                if direction == 'owed':  # Мне должны
+                    person_text = await tr(user_id, 'debtor_name', person=debt['person'])
+                else:  # Я должен
+                    person_text = await tr(user_id, 'creditor_name', person=debt['person'])
+
+                message_lines.append(
+                    f"• {person_text}: {debt['amount']} {debt.get('currency', 'UZS')}\n"
+                    f"  {status_text}"
+                )
+
+            message_text = '\n\n'.join(message_lines)
+
+            # Отправляем напоминание
+            await self.bot.send_message(user_id, message_text)
+            print(f"✅ Ежедневное напоминание отправлено пользователю {user_id}")
+
+        except Exception as e:
+            print(f"❌ Ошибка отправки ежедневного напоминания пользователю {user_id}: {e}")
+
     async def _send_user_reminder(self, user_id: int, debts: list):
         """Отправить напоминание конкретному пользователю"""
         try:
-            from app.keyboards import tr, main_menu
+            from app.keyboards import tr, main_menu, safe_str
 
             if len(debts) == 1:
                 debt = debts[0]
@@ -96,30 +165,65 @@ class ReminderScheduler:
             print(f"❌ Ошибка отправки напоминания пользователю {user_id}: {e}")
 
     async def schedule_all_reminders(self):
-        """Запланировать все напоминания для пользователей"""
+        """
+        Перепланировать все напоминания для всех пользователей
+        Вызывается при изменении времени уведомлений пользователя
+        """
         try:
             from app.database import get_all_users
 
-            users = await get_all_users()
-
-            # Очищаем старые задачи напоминаний
+            # Очищаем все существующие задачи пользовательских напоминаний
             for job in self.scheduler.get_jobs():
-                if job.id == 'send_due_reminders':
+                if job.id.startswith('user_reminder_'):
                     job.remove()
 
-            # Создаем единую задачу на каждый час для проверки напоминаний
+            print("🔄 Перепланирование всех пользовательских напоминаний...")
+
+            # Получаем всех пользователей
+            users = await get_all_users()
+
+            scheduled_count = 0
+            for user in users:
+                user_id = user['user_id']
+                notify_time = user.get('notify_time')
+
+                if not notify_time:
+                    continue
+
+                try:
+                    # Парсим время уведомлений
+                    hour, minute = map(int, notify_time.split(':'))
+
+                    # Создаем задачу для пользователя
+                    self.scheduler.add_job(
+                        self.send_daily_reminders,
+                        'cron',
+                        hour=hour,
+                        minute=minute,
+                        id=f'user_reminder_{user_id}',
+                        args=[user_id],
+                        replace_existing=True
+                    )
+
+                    scheduled_count += 1
+
+                except Exception as e:
+                    print(f"❌ Ошибка планирования напоминаний для пользователя {user_id}: {e}")
+
+            # Также планируем общую проверку просроченных долгов каждый час
             self.scheduler.add_job(
                 self.send_due_reminders,
                 'cron',
                 hour='*',  # Каждый час
                 minute=0,
-                id='send_due_reminders'
+                id='send_due_reminders',
+                replace_existing=True
             )
 
-            print(f"✅ Запланированы напоминания для {len(users)} пользователей")
+            print(f"✅ Перепланирование завершено. Запланировано {scheduled_count} пользовательских напоминаний")
 
         except Exception as e:
-            print(f"❌ Ошибка планирования напоминаний: {e}")
+            print(f"❌ Ошибка в schedule_all_reminders: {e}")
 
     async def send_broadcast_to_all_users(self, text: str, photo_id: str = None, admin_id: int = None):
         """Отправить рассылку всем пользователям"""
@@ -167,6 +271,18 @@ class ReminderScheduler:
             except Exception as e:
                 print(f"❌ Ошибка отправки статистики админу {admin_id}: {e}")
 
+    def add_job(self, *args, **kwargs):
+        """Обёртка для add_job"""
+        return self.scheduler.add_job(*args, **kwargs)
+
 
 # Создаем глобальный экземпляр планировщика
 scheduler = ReminderScheduler()
+
+
+# Глобальная функция для импорта в других модулях
+async def schedule_all_reminders():
+    """
+    Глобальная функция для перепланирования всех напоминаний
+    """
+    await scheduler.schedule_all_reminders()

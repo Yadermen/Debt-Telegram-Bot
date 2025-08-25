@@ -99,14 +99,26 @@ async def show_debt_card(user_id, debt_id):
     if not debt or debt['user_id'] != user_id:
         return None, None
 
+    # Получаем notify_time пользователя
+    user_data = await get_user_data(user_id)
+    notify_time = user_data.get('notify_time', '09:00')
+
+    # Определяем тип долга и выбираем соответствующий текст
+    direction = debt.get('direction', 'owed')
+
+    if direction == 'owed':  # Мне должны
+        text_key = 'debt_card_owed'
+    else:  # Я должен (direction == 'owe')
+        text_key = 'debt_card_owe'
+
     text = await tr(
-        user_id, 'debt_card',
+        user_id, text_key,
         person=safe_str(debt['person']),
         amount=safe_str(debt['amount']),
         currency=safe_str(debt.get('currency', 'UZS')),
         due=safe_str(debt['due']),
         comment=safe_str(debt['comment']),
-        notify_time='-'
+        notify_time=notify_time
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -210,8 +222,16 @@ async def debt_card(call: CallbackQuery, state: FSMContext):
     user_data = await get_user_data(user_id)
     notify_time = user_data.get('notify_time', '09:00')
 
+    # Определяем тип долга и выбираем соответствующий текст
+    direction = debt.get('direction', 'owed')
+
+    if direction == 'owed':  # Мне должны
+        text_key = 'debt_card_owed'
+    else:  # Я должен (direction == 'owe')
+        text_key = 'debt_card_owe'
+
     text = await tr(
-        user_id, 'debt_card',
+        user_id, text_key,
         person=safe_str(debt['person']),
         amount=safe_str(debt['amount']),
         currency=safe_str(debt.get('currency', 'UZS')),
@@ -637,8 +657,15 @@ async def edit_debt_value(message: Message, state: FSMContext):
     notify_time = user_data.get('notify_time', '09:00')
     updated_debt = await get_debt_by_id(debt_id)
 
+    direction = updated_debt.get('direction', 'owed')
+
+    if direction == 'owed':  # Мне должны
+        text_key = 'debt_card_owed'
+    else:  # Я должен (direction == 'owe')
+        text_key = 'debt_card_owe'
+
     text = await tr(
-        user_id, 'debt_card',
+        user_id, text_key,
         person=safe_str(updated_debt['person']),
         amount=safe_str(updated_debt['amount']),
         currency=safe_str(updated_debt.get('currency', 'UZS')),
@@ -713,8 +740,15 @@ async def edit_currency_callback(call: CallbackQuery, state: FSMContext):
     notify_time = user_data.get('notify_time', '09:00')
     updated_debt = await get_debt_by_id(debt_id)
 
+    direction = updated_debt.get('direction', 'owed')
+
+    if direction == 'owed':  # Мне должны
+        text_key = 'debt_card_owed'
+    else:  # Я должен (direction == 'owe')
+        text_key = 'debt_card_owe'
+
     text = await tr(
-        user_id, 'debt_card',
+        user_id, text_key,
         person=safe_str(updated_debt['person']),
         amount=safe_str(updated_debt['amount']),
         currency=safe_str(updated_debt.get('currency', 'UZS')),

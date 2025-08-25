@@ -22,6 +22,7 @@ if not BOT_TOKEN:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
+scheduler.set_bot(bot)
 
 async def on_startup():
     """Функция, выполняемая при запуске бота"""
@@ -33,7 +34,7 @@ async def on_startup():
 
     # Запускаем планировщик
     if not scheduler.running:
-        scheduler.start()
+        await scheduler.start()
         print("✅ Планировщик запущен")
 
     # Планируем напоминания

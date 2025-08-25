@@ -5,6 +5,7 @@ from .crud import (
     get_or_create_user,
     save_user_lang,
     save_user_notify_time,
+    get_due_debts_for_reminders,
     get_user_by_id,
     get_active_debts,
     soft_delete_debt,
@@ -62,5 +63,6 @@ __all__ = [
     'get_scheduled_messages',
     'mark_message_as_sent',
     'get_pending_scheduled_messages',
-    'delete_scheduled_message'
+    'delete_scheduled_message',
+    'get_due_debts_for_reminders',
 ]

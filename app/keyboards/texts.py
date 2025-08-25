@@ -78,13 +78,25 @@ LANGS = {
         'editfield_person_btn': 'Изменить имя',
         'editfield_amount_btn': 'Изменить сумму',
         'editfield_currency_btn': 'Изменить валюту',
-        'editfield_due_btn': 'Изменить дату',
         'editfield_comment_btn': 'Изменить комментарий',
         'how_to_use_btn': 'ℹ️ Как пользоваться',
         'how_to_use_msg': 'Нажмите кнопку ниже, чтобы открыть подробную инструкцию по использованию бота.',
         'open_instruction': 'Открыть инструкцию',
         'continue_instruction': 'Продолжить инструкцию',
         'instruction_back': '⬅️ Назад',
+        'debt_card_owed': '👤 Должник: {person}\n💰 Сумма долга: {amount} {currency}\n📅 Срок оплаты: {due}\n📝 Комментарий: {comment}\n⏰ Напоминание: {notify_time}',
+        'debt_card_owe': '👤 Кому должен: {person}\n💰 Сумма: {amount} {currency}\n📅 Срок оплаты: {due}\n📝 Комментарий: {comment}\n⏰ Напоминание: {notify_time}',
+        'daily_reminder_header': '⏰ Напоминание о долгах:',
+        'overdue': '⚠️ Просрочен на {days} дн.',
+        'due_today': '🔥 Срок истекает сегодня!',
+        'due_in_days': '⏳ Осталось {days} дн.',
+        'debtor_name': 'Должник {person}',
+        'creditor_name': 'Кредитор {person}',
+        'single_reminder': '⏰ Напоминание!\n\n{person} должен вернуть {amount} {currency}\nСрок: {due}',
+        'multiple_reminders': '⏰ У вас {count} напоминаний о долгах:',
+        'process_interrupted': 'Вы прерываете процесс: {process}',
+        'continue_process': '📝 Продолжить',
+        'cancel_and_menu': '🔙 Отменить и в меню'
     },
     'uz': {
         'welcome': 'QarzNazoratBot-ga xush kelibsiz!\nAmalni tanlang:',
@@ -170,6 +182,12 @@ LANGS = {
         'open_instruction': 'Yo‘riqnomani ochish',
         'continue_instruction': 'Yo‘riqnomani davom ettirish',
         'instruction_back': '⬅️ Orqaga',
+        'debt_card_owed': '👤 Qarzdor: {person}\n💰 Qarzi: {amount} {currency}\n📅 To\'lov muddati: {due}\n📝 Izoh: {comment}\n⏰ Eslatma vaqti: {notify_time}',
+        'debt_card_owe': '👤 Sizning qarzingiz: {person}\n💰 Siz to\'lashingiz kerak: {amount} {currency}\n📅 To\'lov muddati: {due}\n📝 Izoh: {comment}\n⏰ Eslatma vaqti: {notify_time}',
+        'process_interrupted': 'Siz jarayonni to\'xtatyapsiz: {process}',
+        'continue_process': '📝 Davom etish',
+        'cancel_and_menu': '🔙 Bekor qilish va menyuga'
+
     }
 }
 
