@@ -94,7 +94,7 @@ LANGS = {
         'creditor_name': 'Кредитор {person}',
         'single_reminder': '⏰ Напоминание!\n\n{person} должен вернуть {amount} {currency}\nСрок: {due}',
         'multiple_reminders': '⏰ У вас {count} напоминаний о долгах:',
-        'process_interrupted': 'Вы прерываете процесс: {process}',
+        'process_interrupted': 'Вы хотите продолжить процесс создания?',
         'continue_process': '📝 Продолжить',
         'cancel_and_menu': '🔙 Отменить и в меню'
     },
@@ -175,7 +175,6 @@ LANGS = {
         'editfield_person_btn': 'Ismni o‘zgartirish',
         'editfield_amount_btn': 'Miqdorni o‘zgartirish',
         'editfield_currency_btn': 'Valyutani o‘zgartirish',
-        'editfield_due_btn': 'Sanani o‘zgartirish',
         'editfield_comment_btn': 'Izohni o‘zgartirish',
         'how_to_use_btn': 'ℹ️ Qanday foydalanish',
         'how_to_use_msg': 'Botdan foydalanish bo‘yicha batafsil yo‘riqnomani ochish uchun pastdagi tugmani bosing.',
@@ -184,7 +183,7 @@ LANGS = {
         'instruction_back': '⬅️ Orqaga',
         'debt_card_owed': '👤 Qarzdor: {person}\n💰 Qarzi: {amount} {currency}\n📅 To\'lov muddati: {due}\n📝 Izoh: {comment}\n⏰ Eslatma vaqti: {notify_time}',
         'debt_card_owe': '👤 Sizning qarzingiz: {person}\n💰 Siz to\'lashingiz kerak: {amount} {currency}\n📅 To\'lov muddati: {due}\n📝 Izoh: {comment}\n⏰ Eslatma vaqti: {notify_time}',
-        'process_interrupted': 'Siz jarayonni to\'xtatyapsiz: {process}',
+        'process_interrupted': 'Yaratish jarayonini davom ettirishni xohlaysizmi?',
         'continue_process': '📝 Davom etish',
         'cancel_and_menu': '🔙 Bekor qilish va menyuga'
 
