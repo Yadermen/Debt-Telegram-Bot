@@ -185,7 +185,15 @@ LANGS = {
         'debt_card_owe': '👤 Sizning qarzingiz: {person}\n💰 Siz to\'lashingiz kerak: {amount} {currency}\n📅 To\'lov muddati: {due}\n📝 Izoh: {comment}\n⏰ Eslatma vaqti: {notify_time}',
         'process_interrupted': 'Yaratish jarayonini davom ettirishni xohlaysizmi?',
         'continue_process': '📝 Davom etish',
-        'cancel_and_menu': '🔙 Bekor qilish va menyuga'
+        'cancel_and_menu': '🔙 Bekor qilish va menyuga',
+        'daily_reminder_header': '⏰ Qarz eslatmasi:',
+        'overdue': '⚠️ {days} kun kechiktirilgan',
+        'due_today': '🔥 Muddat bugun tugaydi!',
+        'due_in_days': '⏳ {days} kun qoldi',
+        'debtor_name': 'Qarzdor {person}',
+        'creditor_name': 'Kreditor {person}',
+        'single_reminder': '⏰ Eslatma!\n\n{person} {amount} {currency} qaytarishi kerak\nMuddati: {due}',
+        'multiple_reminders': '⏰ Sizda {count} ta qarz eslatmalari bor:'
 
     }
 }
