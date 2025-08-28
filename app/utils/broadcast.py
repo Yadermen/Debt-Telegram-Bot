@@ -13,7 +13,7 @@ from ..database import (
 
 async def send_broadcast_to_all_users(text: str, photo_id: str = None, admin_id: int = None) -> Tuple[int, int, List[int]]:
     """Отправить рассылку всем пользователям"""
-    from bot import bot
+    from app.bot import bot
 
     users = await get_all_users()
     success_count = 0

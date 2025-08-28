@@ -99,8 +99,15 @@ async def on_shutdown():
     print("🛑 Остановка бота...")
 
     try:
+        # Исправляем вызов shutdown для scheduler
         if scheduler.running:
-            scheduler.shutdown()
+            # Используем правильный метод для остановки планировщика
+            if hasattr(scheduler, 'stop'):
+                await scheduler.stop()
+            elif hasattr(scheduler.scheduler, 'shutdown'):
+                scheduler.scheduler.stop()
+            else:
+                print("⚠️ Не удалось найти метод остановки планировщика")
             print("✅ Планировщик остановлен")
     except Exception as e:
         print(f"❌ Ошибка остановки планировщика: {e}")
