@@ -1,5 +1,5 @@
 """
-Обработчики для работы с долгами
+Обработчики для работы с долгами - исправленная версия
 """
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -26,40 +26,66 @@ router = Router()
 
 # === УТИЛИТЫ ===
 
+def is_text_message(message: Message) -> bool:
+    """Проверить, что сообщение содержит только текст"""
+    return message.content_type == 'text' and message.text and message.text.strip()
+
+
+def validate_person_name(name: str) -> bool:
+    """Валидация имени человека (поддерживает узбекские символы)"""
+    if not name or len(name.strip()) < 1 or len(name.strip()) > 50:
+        return False
+
+    # Разрешаем латиницу, кириллицу, цифры, пробелы и основные знаки препинания
+    # Включаем узбекские специальные символы: ʻ, ʼ, ʾ, ʿ, ğ, ž, ç, ş, ü, ö, и др.
+    allowed_pattern = r"^[\w\s\-\.'ʻʼʾʿğžçşüöıəȯḩṭẓ]+$"
+    return bool(re.match(allowed_pattern, name.strip(), re.IGNORECASE | re.UNICODE))
+
 
 # === НАВИГАЦИЯ ===
 
 @router.callback_query(F.data == 'back_main')
 async def back_main(call: CallbackQuery, state: FSMContext):
     """Возврат в главное меню"""
-    await state.clear()
-    text = await tr(call.from_user.id, 'choose_action')
-    markup = await main_menu(call.from_user.id)
+    try:
+        await state.clear()
+        text = await tr(call.from_user.id, 'choose_action')
+        markup = await main_menu(call.from_user.id)
+        await safe_edit_message(call, text, markup)
+    except Exception as e:
+        print(f"❌ Ошибка в back_main: {e}")
+        try:
+            await call.answer("❌ Ошибка перехода в меню")
+        except:
+            pass
 
-    await safe_edit_message(call, text, markup)
 
-
-# === ПРОСМОТР ДОЛГОВ (Простой подход) ===
+# === ПРОСМОТР ДОЛГОВ ===
 
 @router.callback_query(F.data == 'my_debts')
 async def show_debts_simple(call: CallbackQuery, state: FSMContext):
-    """Показать список долгов (простой подход)"""
+    """Показать список долгов"""
     user_id = call.from_user.id
     try:
+        await state.clear()
         debts = await get_open_debts(user_id)
-    except Exception:
-        await call.message.answer(await tr(user_id, 'db_error'))
-        return
 
-    if not debts:
-        text = await tr(user_id, 'no_debts')
-        markup = await main_menu(user_id)
+        if not debts:
+            text = await tr(user_id, 'no_debts')
+            markup = await main_menu(user_id)
+            await safe_edit_message(call, text, markup)
+            return
+
+        text = await tr(user_id, 'your_debts')
+        markup = await debts_list_keyboard_paginated(debts, user_id, page=0)
         await safe_edit_message(call, text, markup)
-        return
 
-    text = await tr(user_id, 'your_debts')
-    markup = await debts_list_keyboard_paginated(debts, user_id, page=0)
-    await safe_edit_message(call, text, markup)
+    except Exception as e:
+        print(f"❌ Ошибка в show_debts_simple: {e}")
+        try:
+            await call.answer("❌ Ошибка загрузки долгов")
+        except:
+            pass
 
 
 # === НАВИГАЦИЯ ПО СТРАНИЦАМ ===
@@ -74,1001 +100,368 @@ async def debts_page_navigation(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     try:
         debts = await get_open_debts(user_id)
-    except Exception:
-        await call.message.answer(await tr(user_id, 'db_error'))
-        return
 
-    if not debts:
-        text = await tr(user_id, 'no_debts')
-        markup = await main_menu(user_id)
+        if not debts:
+            text = await tr(user_id, 'no_debts')
+            markup = await main_menu(user_id)
+            await safe_edit_message(call, text, markup)
+            return
+
+        text = await tr(user_id, 'your_debts')
+        markup = await debts_list_keyboard_paginated(debts, user_id, page=page)
         await safe_edit_message(call, text, markup)
-        return
 
-    text = await tr(user_id, 'your_debts')
-    markup = await debts_list_keyboard_paginated(debts, user_id, page=page)
-    await safe_edit_message(call, text, markup)
-
-
-async def show_debt_card(user_id, debt_id):
-    """Показать карточку долга"""
-    try:
-        debt = await get_debt_by_id(debt_id)
-    except Exception:
-        return None, None
-
-    if not debt or debt['user_id'] != user_id:
-        return None, None
-
-    # Получаем notify_time пользователя
-    user_data = await get_user_data(user_id)
-    notify_time = user_data.get('notify_time', '09:00')
-
-    # Определяем тип долга и выбираем соответствующий текст
-    direction = debt.get('direction', 'owed')
-
-    if direction == 'owed':  # Мне должны
-        text_key = 'debt_card_owed'
-    else:  # Я должен (direction == 'owe')
-        text_key = 'debt_card_owe'
-
-    text = await tr(
-        user_id, text_key,
-        person=safe_str(debt['person']),
-        amount=safe_str(debt['amount']),
-        currency=safe_str(debt.get('currency', 'UZS')),
-        due=safe_str(debt['due']),
-        comment=safe_str(debt['comment']),
-        notify_time=notify_time
-    )
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'edit'),
-            callback_data=f'edit_{debt_id}_{0}'
-        )],
-        [
-            InlineKeyboardButton(
-                text=await tr(user_id, 'close'),
-                callback_data=f'close_{debt_id}_{0}'
-            ),
-            InlineKeyboardButton(
-                text=await tr(user_id, 'extend'),
-                callback_data=f'extend_{debt_id}_{0}'
-            ),
-            InlineKeyboardButton(
-                text=await tr(user_id, 'delete'),
-                callback_data=f'del_{debt_id}_{0}'
-            )
-        ],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'to_list'),
-            callback_data='my_debts'
-        )],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'to_menu'),
-            callback_data='back_main'
-        )],
-    ])
-    return text, kb
-
-
-# === УПРАВЛЕНИЕ ДОЛГАМИ ===
-
-@router.callback_query(F.data == 'clear_all')
-async def clear_all_confirm(call: CallbackQuery, state: FSMContext):
-    """Подтверждение очистки всех долгов"""
-    user_id = call.from_user.id
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'yes'),
-            callback_data='confirm_clear_all'
-        )],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'no'),
-            callback_data='cancel_action'
-        )],
-    ])
-    await call.message.edit_text(
-        await tr(user_id, 'clear_all_confirm'),
-        reply_markup=kb
-    )
-
-
-@router.callback_query(F.data == 'confirm_clear_all')
-async def clear_all(call: CallbackQuery, state: FSMContext):
-    """Очистить все долги"""
-    user_id = call.from_user.id
-    await clear_user_debts(user_id)
-    text = await tr(user_id, 'all_deleted')
-    markup = await main_menu(user_id)
-    await safe_edit_message(call, text, markup)
-
-
-@router.callback_query(F.data == 'cancel_action')
-async def cancel_action(call: CallbackQuery, state: FSMContext):
-    """Отмена действия"""
-    text = await tr(call.from_user.id, 'cancelled')
-    markup = await main_menu(call.from_user.id)
-    await safe_edit_message(call, text, markup)
+    except Exception as e:
+        print(f"❌ Ошибка в debts_page_navigation: {e}")
+        try:
+            await call.answer("❌ Ошибка навигации")
+        except:
+            pass
 
 
 # === КАРТОЧКА ДОЛГА ===
 
 @router.callback_query(lambda c: c.data.startswith('debtcard_'))
 async def debt_card(call: CallbackQuery, state: FSMContext):
-    """Показать карточку долга с поддержкой возврата на нужную страницу"""
+    """Показать карточку долга"""
     try:
         parts = call.data.split('_')
         debt_id = int(parts[1])
         page = int(parts[2]) if len(parts) > 2 else 0
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'bad_request'))
+    except Exception as e:
+        print(f"❌ Ошибка парсинга debt_card: {e}")
+        try:
+            await call.answer("❌ Ошибка данных")
+        except:
+            pass
         return
 
     user_id = call.from_user.id
-    await state.update_data(current_page=page)
 
     try:
+        await state.update_data(current_page=page)
         debt = await get_debt_by_id(debt_id)
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'db_error'))
-        return
 
-    if not debt or debt['user_id'] != user_id:
-        await call.message.answer(await tr(call.from_user.id, 'not_found_or_no_access'))
-        return
+        if not debt or debt['user_id'] != user_id:
+            await call.message.answer(await tr(user_id, 'not_found_or_no_access'))
+            return
+
+        # Получаем notify_time пользователя
+        user_data = await get_user_data(user_id)
+        notify_time = user_data.get('notify_time', '09:00')
+
+        # Определяем тип долга
+        direction = debt.get('direction', 'owed')
+        text_key = 'debt_card_owed' if direction == 'owed' else 'debt_card_owe'
+
+        text = await tr(
+            user_id, text_key,
+            person=safe_str(debt['person']),
+            amount=safe_str(debt['amount']),
+            currency=safe_str(debt.get('currency', 'UZS')),
+            due=safe_str(debt['due']),
+            comment=safe_str(debt['comment']),
+            notify_time=notify_time
+        )
 
-    # Получаем notify_time пользователя
-    user_data = await get_user_data(user_id)
-    notify_time = user_data.get('notify_time', '09:00')
-
-    # Определяем тип долга и выбираем соответствующий текст
-    direction = debt.get('direction', 'owed')
-
-    if direction == 'owed':  # Мне должны
-        text_key = 'debt_card_owed'
-    else:  # Я должен (direction == 'owe')
-        text_key = 'debt_card_owe'
-
-    text = await tr(
-        user_id, text_key,
-        person=safe_str(debt['person']),
-        amount=safe_str(debt['amount']),
-        currency=safe_str(debt.get('currency', 'UZS')),
-        due=safe_str(debt['due']),
-        comment=safe_str(debt['comment']),
-        notify_time=notify_time
-    )
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'edit'),
-            callback_data=f'edit_{debt_id}_{page}'
-        )],
-        [
-            InlineKeyboardButton(
-                text=await tr(user_id, 'close'),
-                callback_data=f'close_{debt_id}_{page}'
-            ),
-            InlineKeyboardButton(
-                text=await tr(user_id, 'extend'),
-                callback_data=f'extend_{debt_id}_{page}'
-            ),
-            InlineKeyboardButton(
-                text=await tr(user_id, 'delete'),
-                callback_data=f'del_{debt_id}_{page}'
-            )
-        ],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'to_list'),
-            callback_data=f'debts_page_{page}'
-        )],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'to_menu'),
-            callback_data='back_main'
-        )],
-    ])
-
-    await safe_edit_message(call, text, kb)
-
-
-# === УДАЛЕНИЕ ДОЛГОВ ===
-
-@router.callback_query(lambda c: c.data.startswith('del_'))
-async def del_debt_confirm(call: CallbackQuery, state: FSMContext):
-    """Подтверждение удаления долга"""
-    try:
-        parts = call.data.split('_')
-        debt_id = int(parts[1])
-        page = int(parts[2]) if len(parts) > 2 else 0
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'bad_request'))
-        return
-
-    user_id = call.from_user.id
-    await state.update_data(current_page=page)
-
-    try:
-        debt = await get_debt_by_id(debt_id)
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'db_error'))
-        return
-
-    if not debt or debt['user_id'] != user_id:
-        await call.message.answer(await tr(call.from_user.id, 'not_found_or_no_access'))
-        return
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'yes'),
-            callback_data=f'confirm_del_{debt_id}_{page}'
-        )],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'no'),
-            callback_data=f'debtcard_{debt_id}_{page}'
-        )],
-    ])
-
-    await call.message.edit_text(
-        await tr(user_id, 'confirm_del'),
-        reply_markup=kb
-    )
-
-
-@router.callback_query(lambda c: c.data.startswith('confirm_del_'))
-async def del_debt(call: CallbackQuery, state: FSMContext):
-    """Удаление долга"""
-    try:
-        parts = call.data.split('_')
-        debt_id = int(parts[2])
-        page = int(parts[3]) if len(parts) > 3 else 0
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'bad_request'))
-        return
-
-    user_id = call.from_user.id
-
-    try:
-        debt = await get_debt_by_id(debt_id)
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'db_error'))
-        return
-
-    if not debt or debt['user_id'] != user_id:
-        await call.message.answer(await tr(call.from_user.id, 'not_found_or_no_access'))
-        return
-
-    try:
-        await delete_debt(debt_id)
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'delete_error'))
-        return
-
-    # Получаем обновленный список долгов
-    try:
-        debts = await get_open_debts(user_id)
-    except Exception:
-        debts = []
-
-    if not debts:
-        # Если долгов больше нет, возвращаем в главное меню
-        text = await tr(user_id, 'debt_deleted')
-        markup = await main_menu(user_id)
-        await safe_edit_message(call, text, markup)
-    else:
-        # Если долги есть, показываем список с сообщением об удалении
-        text = await tr(user_id, 'debt_deleted') + '\n\n' + await tr(user_id, 'your_debts')
-        markup = await debts_list_keyboard_paginated(debts, user_id, page=page)
-        await safe_edit_message(call, text, markup)
-
-
-# === ЗАКРЫТИЕ ДОЛГОВ ===
-
-@router.callback_query(lambda c: c.data.startswith('close_'))
-async def close_debt_confirm(call: CallbackQuery, state: FSMContext):
-    """Подтверждение закрытия долга"""
-    try:
-        debt_id = int(call.data.split('_')[1])
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'bad_request'))
-        return
-
-    user_id = call.from_user.id
-
-    try:
-        debt = await get_debt_by_id(debt_id)
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'db_error'))
-        return
-
-    if not debt or debt['user_id'] != user_id:
-        await call.message.answer(await tr(call.from_user.id, 'not_found_or_no_access'))
-        return
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'yes'),
-            callback_data=f'confirm_close_{debt_id}'
-        )],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'no'),
-            callback_data='back_main'
-        )],
-    ])
-
-    await call.message.edit_text(
-        await tr(user_id, 'confirm_close'),
-        reply_markup=kb
-    )
-
-
-@router.callback_query(lambda c: c.data.startswith('confirm_close_'))
-async def close_debt(call: CallbackQuery, state: FSMContext):
-    """Закрытие долга"""
-    try:
-        debt_id = int(call.data.split('_')[2])
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'bad_request'))
-        return
-
-    user_id = call.from_user.id
-
-    try:
-        debt = await get_debt_by_id(debt_id)
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'db_error'))
-        return
-
-    if not debt or debt['user_id'] != user_id:
-        await call.message.answer(await tr(call.from_user.id, 'not_found_or_no_access'))
-        return
-
-    try:
-        await update_debt(debt_id, {'closed': True})
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'update_error'))
-        return
-
-    text = await tr(user_id, 'debt_closed')
-    markup = await main_menu(user_id)
-    await safe_edit_message(call, text, markup)
-
-
-# === ПРОДЛЕНИЕ СРОКА ДОЛГА ===
-
-@router.callback_query(lambda c: c.data.startswith('extend_'))
-async def extend_debt_start(call: CallbackQuery, state: FSMContext):
-    """Начало продления срока долга"""
-    try:
-        debt_id = int(call.data.split('_')[1])
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'bad_request'))
-        return
-
-    user_id = call.from_user.id
-
-    try:
-        debt = await get_debt_by_id(debt_id)
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'db_error'))
-        return
-
-    if not debt or debt['user_id'] != user_id:
-        await call.message.answer(await tr(call.from_user.id, 'not_found_or_no_access'))
-        return
-
-    await state.update_data(extend_debt_id=debt_id)
-    suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
-    await call.message.edit_text(await tr(user_id, 'due', suggest_date=suggest_date))
-    await state.set_state(EditDebt.extend_due)
-
-
-@router.message(EditDebt.extend_due)
-async def extend_debt_value(message: Message, state: FSMContext):
-    """Обработка новой даты для продления"""
-    data = await state.get_data()
-    user_id = message.from_user.id
-    val = message.text.strip()
-
-    try:
-        date_obj = datetime.strptime(val, '%Y-%m-%d')
-    except Exception:
-        await message.answer(await tr(user_id, 'due_wrong', suggest_date=(datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')))
-        return
-
-    # Прибавляем 7 дней к дате
-    new_due = (date_obj + timedelta(days=7)).strftime('%Y-%m-%d')
-
-    try:
-        await update_debt(data['extend_debt_id'], {'due': new_due})
-    except Exception:
-        await message.answer(await tr(user_id, 'update_error'))
-        return
-
-    text = await tr(user_id, 'date_changed')
-    markup = await main_menu(user_id)
-    await message.answer(text, reply_markup=markup)
-    await state.clear()
-
-
-# === РЕДАКТИРОВАНИЕ ДОЛГА ===
-
-@router.callback_query(lambda c: c.data.startswith('edit_'))
-async def edit_debt_menu(call: CallbackQuery, state: FSMContext):
-    """Меню редактирования долга"""
-    try:
-        parts = call.data.split('_')
-        debt_id = int(parts[1])
-        page = int(parts[2]) if len(parts) > 2 else 0
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'bad_request'))
-        return
-
-    user_id = call.from_user.id
-    debt = await get_debt_by_id(debt_id)
-
-    if not debt or debt['user_id'] != user_id:
-        await call.message.answer(await tr(user_id, 'not_found_or_no_access'))
-        return
-
-    await state.update_data(edit_debt_id=debt_id, edit_page=page)
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'editfield_person_btn'),
-            callback_data=f'editfield_person_{debt_id}_{page}'
-        )],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'editfield_amount_btn'),
-            callback_data=f'editfield_amount_{debt_id}_{page}'
-        )],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'editfield_currency_btn'),
-            callback_data=f'editfield_currency_{debt_id}_{page}'
-        )],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'editfield_due_btn'),
-            callback_data=f'editfield_due_{debt_id}_{page}'
-        )],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'editfield_comment_btn'),
-            callback_data=f'editfield_comment_{debt_id}_{page}'
-        )],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'to_menu'),
-            callback_data='back_main'
-        )],
-    ])
-
-    await call.message.edit_text(await tr(user_id, 'edit_what'), reply_markup=kb)
-
-
-@router.callback_query(lambda c: c.data.startswith('editfield_'))
-async def edit_debt_field(call: CallbackQuery, state: FSMContext):
-    """Выбор поля для редактирования"""
-    _, field, debt_id, page = call.data.split('_')
-    debt_id = int(debt_id)
-    page = int(page)
-    user_id = call.from_user.id
-
-    debt = await get_debt_by_id(debt_id)
-    if not debt or debt['user_id'] != user_id:
-        await call.message.answer(await tr(user_id, 'not_found_or_no_access'))
-        return
-
-    await state.update_data(edit_debt_id=debt_id, edit_field=field, edit_page=page)
-
-    # Индивидуальные подсказки для каждого поля
-    if field == 'person':
-        await call.message.edit_text(await tr(user_id, 'editfield_person'))
-    elif field == 'amount':
-        await call.message.edit_text(await tr(user_id, 'editfield_amount'))
-    elif field == 'currency':
-        # Показываем клавиатуру выбора валюты
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
-                text='USD',
-                callback_data=f'editcur_USD_{debt_id}_{page}'
+                text=await tr(user_id, 'edit'),
+                callback_data=f'edit_{debt_id}_{page}'
             )],
+            [
+                InlineKeyboardButton(
+                    text=await tr(user_id, 'close'),
+                    callback_data=f'close_{debt_id}_{page}'
+                ),
+                InlineKeyboardButton(
+                    text=await tr(user_id, 'extend'),
+                    callback_data=f'extend_{debt_id}_{page}'
+                ),
+                InlineKeyboardButton(
+                    text=await tr(user_id, 'delete'),
+                    callback_data=f'del_{debt_id}_{page}'
+                )
+            ],
             [InlineKeyboardButton(
-                text='UZS',
-                callback_data=f'editcur_UZS_{debt_id}_{page}'
-            )],
-            [InlineKeyboardButton(
-                text='EUR',
-                callback_data=f'editcur_EUR_{debt_id}_{page}'
+                text=await tr(user_id, 'to_list'),
+                callback_data=f'debts_page_{page}'
             )],
             [InlineKeyboardButton(
                 text=await tr(user_id, 'to_menu'),
                 callback_data='back_main'
             )],
         ])
-        await call.message.edit_text(
-            await tr(user_id, 'editfield_currency'),
-            reply_markup=kb
-        )
-        return
-    elif field == 'due':
-        suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
-        await call.message.edit_text(
-            await tr(user_id, 'editfield_due', suggest_date=suggest_date)
-        )
-    elif field == 'comment':
-        await call.message.edit_text(await tr(user_id, 'editfield_comment'))
-    else:
-        # Fallback for other fields
-        await call.message.edit_text(await tr(user_id, 'editfield_person'))
 
-    await state.set_state(EditDebt.edit_value)
+        await safe_edit_message(call, text, kb)
 
-
-@router.message(EditDebt.edit_value)
-async def edit_debt_value(message: Message, state: FSMContext):
-    """Обработка нового значения поля"""
-    data = await state.get_data()
-    user_id = message.from_user.id
-    debt_id = data.get('edit_debt_id')
-    field = data.get('edit_field')
-    page = data.get('edit_page', 0)
-    val = message.text.strip()
-
-    debt = await get_debt_by_id(debt_id)
-    if not debt or debt['user_id'] != user_id:
-        await message.answer(await tr(user_id, 'not_found_or_no_access'))
-        return
-
-    updates = {}
-
-    # Индивидуальная валидация для каждого поля
-    if field == 'amount':
-        if not val.isdigit():
-            await message.answer(await tr(user_id, 'amount_wrong'))
-            return
-        updates['amount'] = int(val)
-    elif field == 'due':
+    except Exception as e:
+        print(f"❌ Ошибка в debt_card: {e}")
         try:
-            date_obj = datetime.strptime(val, '%Y-%m-%d')
-        except Exception:
-            suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
-            await message.answer(await tr(user_id, 'due_wrong', suggest_date=suggest_date))
-            return
-        # Прибавляем 7 дней к дате
-        updates['due'] = (date_obj + timedelta(days=7)).strftime('%Y-%m-%d')
-    elif field == 'person':
-        if not val:
-            await message.answer(await tr(user_id, 'editfield_person'))
-            return
-        updates['person'] = val
-    elif field == 'comment':
-        updates['comment'] = val
-    else:
-        updates[field] = val
-
-    try:
-        await update_debt(debt_id, updates)
-    except Exception:
-        await message.answer(await tr(user_id, 'update_error'))
-        return
-
-    await message.answer(await tr(user_id, 'changed'))
-
-    # Получаем обновленные данные долга и показываем карточку
-    user_data = await get_user_data(user_id)
-    notify_time = user_data.get('notify_time', '09:00')
-    updated_debt = await get_debt_by_id(debt_id)
-
-    direction = updated_debt.get('direction', 'owed')
-
-    if direction == 'owed':  # Мне должны
-        text_key = 'debt_card_owed'
-    else:  # Я должен (direction == 'owe')
-        text_key = 'debt_card_owe'
-
-    text = await tr(
-        user_id, text_key,
-        person=safe_str(updated_debt['person']),
-        amount=safe_str(updated_debt['amount']),
-        currency=safe_str(updated_debt.get('currency', 'UZS')),
-        due=safe_str(updated_debt['due']),
-        comment=safe_str(updated_debt['comment']),
-        notify_time=notify_time
-    )
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'edit'),
-            callback_data=f'edit_{debt_id}_{page}'
-        )],
-        [
-            InlineKeyboardButton(
-                text=await tr(user_id, 'close'),
-                callback_data=f'close_{debt_id}_{page}'
-            ),
-            InlineKeyboardButton(
-                text=await tr(user_id, 'extend'),
-                callback_data=f'extend_{debt_id}_{page}'
-            ),
-            InlineKeyboardButton(
-                text=await tr(user_id, 'delete'),
-                callback_data=f'del_{debt_id}_{page}'
-            )
-        ],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'to_list'),
-            callback_data=f'debts_page_{page}'
-        )],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'to_menu'),
-            callback_data='back_main'
-        )],
-    ])
-
-    await message.answer(text, reply_markup=kb)
-    await state.clear()
+            await call.answer("❌ Ошибка загрузки долга")
+        except:
+            pass
 
 
-# === РЕДАКТИРОВАНИЕ ВАЛЮТЫ ===
-
-@router.callback_query(lambda c: c.data.startswith('editcur_'))
-async def edit_currency_callback(call: CallbackQuery, state: FSMContext):
-    """Обработка выбора валюты при редактировании"""
-    try:
-        _, currency, debt_id, page = call.data.split('_')
-        debt_id = int(debt_id)
-        page = int(page)
-    except Exception:
-        await call.message.answer(await tr(call.from_user.id, 'bad_request'))
-        return
-
-    user_id = call.from_user.id
-    debt = await get_debt_by_id(debt_id)
-
-    if not debt or debt['user_id'] != user_id:
-        await call.message.answer(await tr(user_id, 'not_found_or_no_access'))
-        return
-
-    try:
-        await update_debt(debt_id, {'currency': currency})
-    except Exception:
-        await call.message.answer(await tr(user_id, 'update_error'))
-        return
-
-    await call.answer(await tr(user_id, 'changed'))
-
-    # Показываем обновленную карточку долга
-    user_data = await get_user_data(user_id)
-    notify_time = user_data.get('notify_time', '09:00')
-    updated_debt = await get_debt_by_id(debt_id)
-
-    direction = updated_debt.get('direction', 'owed')
-
-    if direction == 'owed':  # Мне должны
-        text_key = 'debt_card_owed'
-    else:  # Я должен (direction == 'owe')
-        text_key = 'debt_card_owe'
-
-    text = await tr(
-        user_id, text_key,
-        person=safe_str(updated_debt['person']),
-        amount=safe_str(updated_debt['amount']),
-        currency=safe_str(updated_debt.get('currency', 'UZS')),
-        due=safe_str(updated_debt['due']),
-        comment=safe_str(updated_debt['comment']),
-        notify_time=notify_time
-    )
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'edit'),
-            callback_data=f'edit_{debt_id}_{page}'
-        )],
-        [
-            InlineKeyboardButton(
-                text=await tr(user_id, 'close'),
-                callback_data=f'close_{debt_id}_{page}'
-            ),
-            InlineKeyboardButton(
-                text=await tr(user_id, 'extend'),
-                callback_data=f'extend_{debt_id}_{page}'
-            ),
-            InlineKeyboardButton(
-                text=await tr(user_id, 'delete'),
-                callback_data=f'del_{debt_id}_{page}'
-            )
-        ],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'to_list'),
-            callback_data=f'debts_page_{page}'
-        )],
-        [InlineKeyboardButton(
-            text=await tr(user_id, 'to_menu'),
-            callback_data='back_main'
-        )],
-    ])
-
-    await safe_edit_message(call, text, kb)
-
-
-# === ДОБАВЛЕНИЕ ДОЛГА (Новый подход) ===
+# === ДОБАВЛЕНИЕ ДОЛГА ===
 
 @router.callback_query(F.data == 'add_debt')
 async def add_debt_start(call: CallbackQuery, state: FSMContext):
-    """Начало добавления долга (простой подход)"""
-    await state.clear()
-    await call.message.edit_text(await tr(call.from_user.id, 'person'))
-    await state.set_state(AddDebt.person)
+    """Начало добавления долга"""
+    try:
+        await state.clear()
+        await call.message.edit_text(await tr(call.from_user.id, 'person'))
+        await state.set_state(AddDebt.person)
+    except Exception as e:
+        print(f"❌ Ошибка в add_debt_start: {e}")
+        try:
+            await call.answer("❌ Ошибка начала добавления")
+        except:
+            pass
 
 
 @router.message(AddDebt.person)
 async def add_debt_person_simple(message: Message, state: FSMContext):
-    """Получение имени должника (простой подход)"""
-    await state.update_data(person=message.text)
-    await message.answer(await tr(message.from_user.id, 'currency'), reply_markup=await currency_keyboard(message.from_user.id))
-    await state.set_state(AddDebt.currency)
-
-
-@router.callback_query(lambda c: c.data.startswith('cur_'), AddDebt.currency)
-async def add_debt_currency_simple(call: CallbackQuery, state: FSMContext):
-    """Выбор валюты (простой подход)"""
-    currency = call.data.split('_')[1].upper()
-    await state.update_data(currency=currency)
-    await call.message.edit_text(await tr(call.from_user.id, 'amount'))
-    await state.set_state(AddDebt.amount)
-
-
-@router.message(AddDebt.amount)
-async def add_debt_amount_simple(message: Message, state: FSMContext):
-    """Получение суммы долга (простой подход)"""
-    if not message.text.isdigit():
-        await message.answer(await tr(message.from_user.id, 'amount_wrong'))
-        return
-    await state.update_data(amount=int(message.text))
-    suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
-    await message.answer(await tr(message.from_user.id, 'due', suggest_date=suggest_date))
-    await state.set_state(AddDebt.due)
-
-
-@router.message(AddDebt.due)
-async def add_debt_due_simple(message: Message, state: FSMContext):
-    """Получение срока возврата (простой подход)"""
+    """Получение имени должника с поддержкой узбекского языка"""
     try:
-        datetime.strptime(message.text, '%Y-%m-%d')
-    except Exception:
-        suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
-        await message.answer(await tr(message.from_user.id, 'due_wrong', suggest_date=suggest_date))
-        return
-    await state.update_data(due=message.text)
-    await message.answer(await tr(message.from_user.id, 'direction'), reply_markup=await direction_keyboard(message.from_user.id))
-    await state.set_state(AddDebt.direction)
+        # Проверяем тип сообщения
+        if not is_text_message(message):
+            user_id = message.from_user.id
+            error_text = await tr(user_id, 'text_only_please')
 
+            # Создаем кнопку возврата в меню
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=await tr(user_id, 'to_menu'),
+                    callback_data='back_main'
+                )]
+            ])
 
-@router.callback_query(lambda c: c.data.startswith('dir_'), AddDebt.direction)
-async def add_debt_direction_simple(call: CallbackQuery, state: FSMContext):
-    """Выбор направления долга (простой подход)"""
-    direction = 'gave' if call.data == 'dir_gave' else 'took'
-    await state.update_data(direction=direction)
-    await call.message.edit_text(await tr(call.from_user.id, 'comment'), reply_markup=await skip_comment_keyboard(call.from_user.id))
-    await state.set_state(AddDebt.comment)
+            await message.answer(error_text, reply_markup=kb)
+            await state.clear()
+            return
 
-
-@router.message(AddDebt.comment)
-async def add_debt_comment_simple(message: Message, state: FSMContext):
-    """Получение комментария (простой подход)"""
-    data = await state.get_data()
-    debt = {
-        'person': data['person'],
-        'amount': data['amount'],
-        'currency': data.get('currency', 'UZS'),
-        'direction': data['direction'],
-        'date': datetime.now().strftime('%Y-%m-%d'),
-        'due': data['due'],
-        'comment': message.text if message.text.strip() else '',
-        'closed': False
-    }
-    await add_debt(int(message.from_user.id), debt)
-    await message.answer(await tr(message.from_user.id, 'debt_saved'), reply_markup=await main_menu(message.from_user.id))
-    await state.clear()
-
-
-@router.callback_query(F.data == 'skip_comment', AddDebt.comment)
-async def skip_comment_simple(call: CallbackQuery, state: FSMContext):
-    """Пропуск комментария (простой подход)"""
-    data = await state.get_data()
-    debt = {
-        'person': data['person'],
-        'amount': data['amount'],
-        'currency': data.get('currency', 'UZS'),
-        'direction': data['direction'],
-        'date': datetime.now().strftime('%Y-%m-%d'),
-        'due': data['due'],
-        'comment': '',
-        'closed': False
-    }
-    await add_debt(int(call.from_user.id), debt)
-    await call.message.edit_text(await tr(call.from_user.id, 'debt_saved'), reply_markup=await main_menu(call.from_user.id))
-    await state.clear()
-
-
-# === ДОБАВЛЕНИЕ ДОЛГА (Расширенный подход) ===
-
-@router.callback_query(lambda c: c.data == CallbackData.ADD_DEBT)
-async def start_add_debt(call: CallbackQuery, state: FSMContext):
-    """Начало добавления долга"""
-    user_id = call.from_user.id
-
-    try:
-        await state.set_state(AddDebt.person)
-        person_text = await tr(user_id, 'person')
-        kb = await menu_button(user_id)
-
-        await safe_edit_message(call, person_text, kb)
-
-    except Exception as e:
-        print(f"❌ Ошибка в start_add_debt: {e}")
-        await call.answer("❌ Ошибка начала добавления долга")
-
-
-@router.message(AddDebt.person)
-async def add_debt_person_extended(message: Message, state: FSMContext):
-    """Получение имени должника (расширенный подход)"""
-    user_id = message.from_user.id
-
-    try:
         person_name = message.text.strip()
 
-        if not person_name or len(person_name) > 50:
-            await message.answer("❌ Имя должно быть от 1 до 50 символов")
+        # Валидация имени с поддержкой узбекских символов
+        if not validate_person_name(person_name):
+            user_id = message.from_user.id
+            error_text = await tr(user_id, 'person_name_invalid')
+            await message.answer(error_text)
             return
 
         await state.update_data(person=person_name)
-        await state.set_state(AddDebt.currency)
+        user_id = message.from_user.id
 
         currency_text = await tr(user_id, 'currency')
         kb = await currency_keyboard(user_id)
 
         await message.answer(currency_text, reply_markup=kb)
+        await state.set_state(AddDebt.currency)
 
     except Exception as e:
-        print(f"❌ Ошибка в add_debt_person: {e}")
+        print(f"❌ Ошибка в add_debt_person_simple: {e}")
+        try:
+            user_id = message.from_user.id
+            await state.clear()
+            error_text = await tr(user_id, 'system_error')
+            markup = await main_menu(user_id)
+            await message.answer(error_text, reply_markup=markup)
+        except Exception as inner_e:
+            print(f"❌ Критическая ошибка в обработке ошибки: {inner_e}")
 
 
-@router.callback_query(lambda c: c.data.startswith('cur_') and hasattr(CallbackData, 'CUR_USD'), AddDebt.currency)
-async def add_debt_currency_extended(call: CallbackQuery, state: FSMContext):
-    """Выбор валюты (расширенный подход)"""
-    user_id = call.from_user.id
-
+@router.callback_query(lambda c: c.data.startswith('cur_'), AddDebt.currency)
+async def add_debt_currency_simple(call: CallbackQuery, state: FSMContext):
+    """Выбор валюты"""
     try:
-        currency_map = {
-            CallbackData.CUR_USD: 'USD',
-            CallbackData.CUR_UZS: 'UZS',
-            CallbackData.CUR_EUR: 'EUR'
-        }
+        currency = call.data.split('_')[1].upper()
 
-        currency = currency_map.get(call.data)
-        if not currency:
+        # Валидация валюты
+        if currency not in ['USD', 'UZS', 'EUR']:
             await call.answer("❌ Неизвестная валюта")
             return
 
         await state.update_data(currency=currency)
-        await state.set_state(AddDebt.amount)
+        user_id = call.from_user.id
 
         amount_text = await tr(user_id, 'amount')
-        kb = await menu_button(user_id)
-
-        await safe_edit_message(call, amount_text, kb)
+        await call.message.edit_text(amount_text)
+        await state.set_state(AddDebt.amount)
 
     except Exception as e:
-        print(f"❌ Ошибка в add_debt_currency: {e}")
+        print(f"❌ Ошибка в add_debt_currency_simple: {e}")
+        try:
+            await call.answer("❌ Ошибка выбора валюты")
+            await state.clear()
+        except:
+            pass
 
 
 @router.message(AddDebt.amount)
-async def add_debt_amount_extended(message: Message, state: FSMContext):
-    """Получение суммы долга (расширенный подход)"""
-    user_id = message.from_user.id
-
+async def add_debt_amount_simple(message: Message, state: FSMContext):
+    """Получение суммы долга"""
     try:
+        # Проверяем тип сообщения
+        if not is_text_message(message):
+            user_id = message.from_user.id
+            error_text = await tr(user_id, 'amount_wrong')
+            await message.answer(error_text)
+            return
+
         amount_text = message.text.strip()
 
-        # Проверяем, что введено число
-        if not re.match(r'^\d+, amount_text'):
+        # Проверяем, что это число
+        if not amount_text.isdigit():
+            user_id = message.from_user.id
             error_text = await tr(user_id, 'amount_wrong')
             await message.answer(error_text)
             return
 
         amount = int(amount_text)
         if amount <= 0 or amount > 999999999:
-            await message.answer("❌ Сумма должна быть от 1 до 999,999,999")
+            user_id = message.from_user.id
+            error_text = await tr(user_id, 'amount_range_error')
+            await message.answer(error_text)
             return
 
         await state.update_data(amount=amount)
-        await state.set_state(AddDebt.due)
+        user_id = message.from_user.id
 
-        # Предлагаем дату через неделю
         suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
         due_text = await tr(user_id, 'due', suggest_date=suggest_date)
-        kb = await menu_button(user_id)
-
-        await message.answer(due_text, reply_markup=kb)
+        await message.answer(due_text)
+        await state.set_state(AddDebt.due)
 
     except Exception as e:
-        print(f"❌ Ошибка в add_debt_amount: {e}")
+        print(f"❌ Ошибка в add_debt_amount_simple: {e}")
+        try:
+            user_id = message.from_user.id
+            await state.clear()
+            error_text = await tr(user_id, 'system_error')
+            markup = await main_menu(user_id)
+            await message.answer(error_text, reply_markup=markup)
+        except:
+            pass
 
 
 @router.message(AddDebt.due)
-async def add_debt_due_extended(message: Message, state: FSMContext):
-    """Получение срока возврата (расширенный подход)"""
-    user_id = message.from_user.id
-
+async def add_debt_due_simple(message: Message, state: FSMContext):
+    """Получение срока возврата"""
     try:
-        due_text = message.text.strip()
-
-        # Проверяем формат даты YYYY-MM-DD
-        if not re.match(r'^\d{4}-\d{2}-\d{2}, due_text'):
+        # Проверяем тип сообщения
+        if not is_text_message(message):
+            user_id = message.from_user.id
             suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
             error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
             await message.answer(error_text)
             return
 
-        # Проверяем корректность даты
+        due_text = message.text.strip()
+
+        # Валидация даты
         try:
             due_date = datetime.strptime(due_text, '%Y-%m-%d')
             if due_date.date() < datetime.now().date():
-                await message.answer("❌ Дата не может быть в прошлом")
+                user_id = message.from_user.id
+                await message.answer(await tr(user_id, 'date_in_past'))
                 return
         except ValueError:
+            user_id = message.from_user.id
             suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
             error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
             await message.answer(error_text)
             return
 
         await state.update_data(due=due_text)
-        await state.set_state(AddDebt.direction)
+        user_id = message.from_user.id
 
         direction_text = await tr(user_id, 'direction')
         kb = await direction_keyboard(user_id)
-
         await message.answer(direction_text, reply_markup=kb)
+        await state.set_state(AddDebt.direction)
 
     except Exception as e:
-        print(f"❌ Ошибка в add_debt_due: {e}")
+        print(f"❌ Ошибка в add_debt_due_simple: {e}")
+        try:
+            user_id = message.from_user.id
+            await state.clear()
+            error_text = await tr(user_id, 'system_error')
+            markup = await main_menu(user_id)
+            await message.answer(error_text, reply_markup=markup)
+        except:
+            pass
 
 
-@router.callback_query(lambda c: c.data.startswith('dir_') and hasattr(CallbackData, 'DIR_GAVE'), AddDebt.direction)
-async def add_debt_direction_extended(call: CallbackQuery, state: FSMContext):
-    """Выбор направления долга (расширенный подход)"""
-    user_id = call.from_user.id
-
+@router.callback_query(lambda c: c.data.startswith('dir_'), AddDebt.direction)
+async def add_debt_direction_simple(call: CallbackQuery, state: FSMContext):
+    """Выбор направления долга"""
     try:
-        direction_map = {
-            CallbackData.DIR_GAVE: 'owed',  # Ты дал = тебе должны
-            CallbackData.DIR_TOOK: 'owe'  # Ты взял = ты должен
-        }
+        direction_data = call.data.split('_')[1]
 
-        direction = direction_map.get(call.data)
-        if not direction:
-            await call.answer("❌ Неизвестное направление")
-            return
+        # Конвертируем в правильный формат направления
+        direction = 'owed' if direction_data == 'gave' else 'owe'
 
         await state.update_data(direction=direction)
-        await state.set_state(AddDebt.comment)
+        user_id = call.from_user.id
 
         comment_text = await tr(user_id, 'comment')
         kb = await skip_comment_keyboard(user_id)
-
-        await safe_edit_message(call, comment_text, kb)
+        await call.message.edit_text(comment_text, reply_markup=kb)
+        await state.set_state(AddDebt.comment)
 
     except Exception as e:
-        print(f"❌ Ошибка в add_debt_direction: {e}")
+        print(f"❌ Ошибка в add_debt_direction_simple: {e}")
+        try:
+            await call.answer("❌ Ошибка выбора направления")
+            await state.clear()
+        except:
+            pass
 
 
-@router.callback_query(lambda c: c.data == CallbackData.SKIP_COMMENT, AddDebt.comment)
-async def skip_debt_comment_extended(call: CallbackQuery, state: FSMContext):
-    """Пропуск комментария (расширенный подход)"""
-    await finish_add_debt(call.from_user.id, state, "")
-    await call.answer()
+@router.message(AddDebt.comment)
+async def add_debt_comment_simple(message: Message, state: FSMContext):
+    """Получение комментария"""
+    try:
+        # Проверяем тип сообщения
+        comment = ""
+        if is_text_message(message):
+            comment = message.text.strip()
+        else:
+            # Если не текст, используем пустой комментарий
+            user_id = message.from_user.id
+            warning_text = await tr(user_id, 'comment_text_only')
+            await message.answer(warning_text)
+
+        await finish_add_debt(message.from_user.id, state, comment, message)
+
+    except Exception as e:
+        print(f"❌ Ошибка в add_debt_comment_simple: {e}")
+        try:
+            user_id = message.from_user.id
+            await state.clear()
+            error_text = await tr(user_id, 'system_error')
+            markup = await main_menu(user_id)
+            await message.answer(error_text, reply_markup=markup)
+        except:
+            pass
 
 
-async def finish_add_debt(user_id: int, state: FSMContext, comment: str):
+@router.callback_query(F.data == 'skip_comment', AddDebt.comment)
+async def skip_comment_simple(call: CallbackQuery, state: FSMContext):
+    """Пропуск комментария"""
+    try:
+        await finish_add_debt(call.from_user.id, state, "", None, call)
+    except Exception as e:
+        print(f"❌ Ошибка в skip_comment_simple: {e}")
+        try:
+            await call.answer("❌ Ошибка сохранения")
+            await state.clear()
+        except:
+            pass
+
+
+async def finish_add_debt(user_id: int, state: FSMContext, comment: str, message: Message = None, call: CallbackQuery = None):
     """Завершение добавления долга"""
     try:
         data = await state.get_data()
@@ -1078,6 +471,15 @@ async def finish_add_debt(user_id: int, state: FSMContext, comment: str):
         for field in required_fields:
             if field not in data:
                 print(f"❌ Отсутствует поле {field} в данных состояния")
+                error_text = await tr(user_id, 'incomplete_data')
+                kb = await main_menu(user_id)
+
+                if message:
+                    await message.answer(error_text, reply_markup=kb)
+                elif call:
+                    await call.message.edit_text(error_text, reply_markup=kb)
+
+                await state.clear()
                 return
 
         # Подготавливаем данные долга
@@ -1101,59 +503,657 @@ async def finish_add_debt(user_id: int, state: FSMContext, comment: str):
         success_text = await tr(user_id, 'debt_saved')
         kb = await main_menu(user_id)
 
-        from bot import bot
-        await bot.send_message(user_id, success_text, reply_markup=kb)
+        if message:
+            await message.answer(success_text, reply_markup=kb)
+        elif call:
+            await call.message.edit_text(success_text, reply_markup=kb)
 
         print(f"✅ Долг #{debt_id} добавлен пользователем {user_id}")
 
     except Exception as e:
         print(f"❌ Ошибка в finish_add_debt: {e}")
-        # В случае ошибки очищаем состояние и возвращаем в меню
-        await state.clear()
-        error_text = await tr(user_id, 'db_error')
-        kb = await main_menu(user_id)
+        try:
+            # В случае ошибки очищаем состояние и возвращаем в меню
+            await state.clear()
+            error_text = await tr(user_id, 'save_debt_error')
+            kb = await main_menu(user_id)
 
-        from bot import bot
-        await bot.send_message(user_id, error_text, reply_markup=kb)
+            if message:
+                await message.answer(error_text, reply_markup=kb)
+            elif call:
+                await call.message.edit_text(error_text, reply_markup=kb)
+        except Exception as inner_e:
+            print(f"❌ Критическая ошибка в finish_add_debt: {inner_e}")
 
 
-# === ПРОСМОТР ДОЛГОВ ===
+# === УДАЛЕНИЕ ДОЛГОВ ===
 
-@router.callback_query(lambda c: c.data == CallbackData.MY_DEBTS)
-async def show_debts_list(call: CallbackQuery, state: FSMContext):
-    """Показать список долгов"""
-    user_id = call.from_user.id
-
+@router.callback_query(lambda c: c.data.startswith('del_'))
+async def del_debt_confirm(call: CallbackQuery, state: FSMContext):
+    """Подтверждение удаления долга"""
     try:
-        await state.clear()
+        parts = call.data.split('_')
+        debt_id = int(parts[1])
+        page = int(parts[2]) if len(parts) > 2 else 0
 
+        user_id = call.from_user.id
+        await state.update_data(current_page=page)
+
+        debt = await get_debt_by_id(debt_id)
+
+        if not debt or debt['user_id'] != user_id:
+            await call.message.answer(await tr(user_id, 'not_found_or_no_access'))
+            return
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'yes'),
+                callback_data=f'confirm_del_{debt_id}_{page}'
+            )],
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'no'),
+                callback_data=f'debtcard_{debt_id}_{page}'
+            )],
+        ])
+
+        confirm_text = await tr(user_id, 'confirm_del')
+        await call.message.edit_text(confirm_text, reply_markup=kb)
+
+    except Exception as e:
+        print(f"❌ Ошибка в del_debt_confirm: {e}")
+        try:
+            await call.answer("❌ Ошибка удаления")
+        except:
+            pass
+
+
+@router.callback_query(lambda c: c.data.startswith('confirm_del_'))
+async def del_debt(call: CallbackQuery, state: FSMContext):
+    """Удаление долга"""
+    try:
+        parts = call.data.split('_')
+        debt_id = int(parts[2])
+        page = int(parts[3]) if len(parts) > 3 else 0
+
+        user_id = call.from_user.id
+        debt = await get_debt_by_id(debt_id)
+
+        if not debt or debt['user_id'] != user_id:
+            await call.message.answer(await tr(user_id, 'not_found_or_no_access'))
+            return
+
+        await delete_debt(debt_id)
+
+        # Получаем обновленный список долгов
         debts = await get_open_debts(user_id)
 
         if not debts:
-            no_debts_text = await tr(user_id, 'no_debts')
-            kb = await main_menu(user_id)
-            await safe_edit_message(call, no_debts_text, kb)
-            return
-
-        # Формируем список долгов
-        debts_text = await tr(user_id, 'your_debts') + "\n\n"
-
-        for debt in debts:
-            direction_emoji = "💰" if debt['direction'] == 'owed' else "⚠️"
-            direction_text = "Вам должны" if debt['direction'] == 'owed' else "Вы должны"
-
-            debts_text += f"{direction_emoji} <b>{debt['person']}</b>\n"
-            debts_text += f"💳 {debt['amount']} {debt['currency']}\n"
-            debts_text += f"📅 До: {debt['due']}\n"
-
-            if debt['comment']:
-                debts_text += f"📝 {debt['comment']}\n"
-
-            debts_text += f"/debt_{debt['id']}\n\n"
-
-        kb = await menu_button(user_id)
-        await safe_edit_message(call, debts_text, kb, parse_mode='HTML')
+            # Если долгов больше нет, возвращаем в главное меню
+            text = await tr(user_id, 'debt_deleted')
+            markup = await main_menu(user_id)
+            await safe_edit_message(call, text, markup)
+        else:
+            # Если долги есть, показываем список
+            text = await tr(user_id, 'debt_deleted') + '\n\n' + await tr(user_id, 'your_debts')
+            markup = await debts_list_keyboard_paginated(debts, user_id, page=page)
+            await safe_edit_message(call, text, markup)
 
     except Exception as e:
-        print(f"❌ Ошибка в show_debts_list: {e}")
-        await call.answer("❌ Ошибка при получении списка долгов")
+        print(f"❌ Ошибка в del_debt: {e}")
+        try:
+            await call.answer("❌ Ошибка удаления долга")
+        except:
+            pass
+
+
+# === РЕДАКТИРОВАНИЕ ДОЛГА ===
+
+@router.callback_query(lambda c: c.data.startswith('edit_'))
+async def edit_debt_menu(call: CallbackQuery, state: FSMContext):
+    """Меню редактирования долга"""
+    try:
+        parts = call.data.split('_')
+        debt_id = int(parts[1])
+        page = int(parts[2]) if len(parts) > 2 else 0
+
+        user_id = call.from_user.id
+        debt = await get_debt_by_id(debt_id)
+
+        if not debt or debt['user_id'] != user_id:
+            await call.message.answer(await tr(user_id, 'not_found_or_no_access'))
+            return
+
+        await state.update_data(edit_debt_id=debt_id, edit_page=page)
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'editfield_person_btn'),
+                callback_data=f'editfield_person_{debt_id}_{page}'
+            )],
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'editfield_amount_btn'),
+                callback_data=f'editfield_amount_{debt_id}_{page}'
+            )],
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'editfield_currency_btn'),
+                callback_data=f'editfield_currency_{debt_id}_{page}'
+            )],
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'editfield_due_btn'),
+                callback_data=f'editfield_due_{debt_id}_{page}'
+            )],
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'editfield_comment_btn'),
+                callback_data=f'editfield_comment_{debt_id}_{page}'
+            )],
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'to_menu'),
+                callback_data='back_main'
+            )],
+        ])
+
+        edit_menu_text = await tr(user_id, 'edit_what')
+        await call.message.edit_text(edit_menu_text, reply_markup=kb)
+
+    except Exception as e:
+        print(f"❌ Ошибка в edit_debt_menu: {e}")
+        try:
+            await call.answer("❌ Ошибка редактирования")
+        except:
+            pass
+
+
+@router.callback_query(lambda c: c.data.startswith('editfield_'))
+async def edit_debt_field(call: CallbackQuery, state: FSMContext):
+    """Выбор поля для редактирования"""
+    try:
+        _, field, debt_id, page = call.data.split('_')
+        debt_id = int(debt_id)
+        page = int(page)
+        user_id = call.from_user.id
+
+        debt = await get_debt_by_id(debt_id)
+        if not debt or debt['user_id'] != user_id:
+            await call.message.answer(await tr(user_id, 'not_found_or_no_access'))
+            return
+
+        await state.update_data(edit_debt_id=debt_id, edit_field=field, edit_page=page)
+
+        # Обработка разных полей
+        if field == 'person':
+            prompt_text = await tr(user_id, 'editfield_person')
+            await call.message.edit_text(prompt_text)
+            await state.set_state(EditDebt.edit_value)
+        elif field == 'amount':
+            prompt_text = await tr(user_id, 'editfield_amount')
+            await call.message.edit_text(prompt_text)
+            await state.set_state(EditDebt.edit_value)
+        elif field == 'currency':
+            # Показываем клавиатуру выбора валюты
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text='USD', callback_data=f'editcur_USD_{debt_id}_{page}')],
+                [InlineKeyboardButton(text='UZS', callback_data=f'editcur_UZS_{debt_id}_{page}')],
+                [InlineKeyboardButton(text='EUR', callback_data=f'editcur_EUR_{debt_id}_{page}')],
+                [InlineKeyboardButton(text=await tr(user_id, 'to_menu'), callback_data='back_main')],
+            ])
+            currency_text = await tr(user_id, 'editfield_currency')
+            await call.message.edit_text(currency_text, reply_markup=kb)
+            return
+        elif field == 'due':
+            suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
+            prompt_text = await tr(user_id, 'editfield_due', suggest_date=suggest_date)
+            await call.message.edit_text(prompt_text)
+            await state.set_state(EditDebt.edit_value)
+        elif field == 'comment':
+            prompt_text = await tr(user_id, 'editfield_comment')
+            await call.message.edit_text(prompt_text)
+            await state.set_state(EditDebt.edit_value)
+        else:
+            # Fallback для неизвестных полей
+            prompt_text = await tr(user_id, 'editfield_person')
+            await call.message.edit_text(prompt_text)
+            await state.set_state(EditDebt.edit_value)
+
+    except Exception as e:
+        print(f"❌ Ошибка в edit_debt_field: {e}")
+        try:
+            await call.answer("❌ Ошибка редактирования поля")
+            await state.clear()
+        except:
+            pass
+
+
+@router.message(EditDebt.edit_value)
+async def edit_debt_value(message: Message, state: FSMContext):
+    """Обработка нового значения поля"""
+    try:
+        # Проверяем тип сообщения
+        if not is_text_message(message):
+            user_id = message.from_user.id
+            error_text = await tr(user_id, 'text_only_please')
+            await message.answer(error_text)
+            return
+
+        data = await state.get_data()
+        user_id = message.from_user.id
+        debt_id = data.get('edit_debt_id')
+        field = data.get('edit_field')
+        page = data.get('edit_page', 0)
+        val = message.text.strip()
+
+        debt = await get_debt_by_id(debt_id)
+        if not debt or debt['user_id'] != user_id:
+            await message.answer(await tr(user_id, 'not_found_or_no_access'))
+            return
+
+        updates = {}
+
+        # Валидация в зависимости от поля
+        if field == 'amount':
+            if not val.isdigit():
+                await message.answer(await tr(user_id, 'amount_wrong'))
+                return
+            amount = int(val)
+            if amount <= 0 or amount > 999999999:
+                await message.answer(await tr(user_id, 'amount_range_error'))
+                return
+            updates['amount'] = amount
+
+        elif field == 'due':
+            try:
+                date_obj = datetime.strptime(val, '%Y-%m-%d')
+                if date_obj.date() < datetime.now().date():
+                    await message.answer(await tr(user_id, 'date_in_past'))
+                    return
+            except ValueError:
+                suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
+                await message.answer(await tr(user_id, 'due_wrong', suggest_date=suggest_date))
+                return
+            updates['due'] = val
+
+        elif field == 'person':
+            if not validate_person_name(val):
+                await message.answer(await tr(user_id, 'person_name_invalid'))
+                return
+            updates['person'] = val
+
+        elif field == 'comment':
+            updates['comment'] = val
+        else:
+            updates[field] = val
+
+        # Обновляем долг в базе
+        await update_debt(debt_id, updates)
+
+        # Показываем успешное сообщение
+        success_text = await tr(user_id, 'changed')
+        await message.answer(success_text)
+
+        # Получаем обновленные данные долга и показываем карточку
+        await show_updated_debt_card(message, user_id, debt_id, page)
+        await state.clear()
+
+    except Exception as e:
+        print(f"❌ Ошибка в edit_debt_value: {e}")
+        try:
+            user_id = message.from_user.id
+            await state.clear()
+            error_text = await tr(user_id, 'update_error')
+            markup = await main_menu(user_id)
+            await message.answer(error_text, reply_markup=markup)
+        except:
+            pass
+
+
+async def show_updated_debt_card(message: Message, user_id: int, debt_id: int, page: int):
+    """Показать обновленную карточку долга"""
+    try:
+        user_data = await get_user_data(user_id)
+        notify_time = user_data.get('notify_time', '09:00')
+        updated_debt = await get_debt_by_id(debt_id)
+
+        if not updated_debt:
+            return
+
+        direction = updated_debt.get('direction', 'owed')
+        text_key = 'debt_card_owed' if direction == 'owed' else 'debt_card_owe'
+
+        text = await tr(
+            user_id, text_key,
+            person=safe_str(updated_debt['person']),
+            amount=safe_str(updated_debt['amount']),
+            currency=safe_str(updated_debt.get('currency', 'UZS')),
+            due=safe_str(updated_debt['due']),
+            comment=safe_str(updated_debt['comment']),
+            notify_time=notify_time
+        )
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'edit'),
+                callback_data=f'edit_{debt_id}_{page}'
+            )],
+            [
+                InlineKeyboardButton(
+                    text=await tr(user_id, 'close'),
+                    callback_data=f'close_{debt_id}_{page}'
+                ),
+                InlineKeyboardButton(
+                    text=await tr(user_id, 'extend'),
+                    callback_data=f'extend_{debt_id}_{page}'
+                ),
+                InlineKeyboardButton(
+                    text=await tr(user_id, 'delete'),
+                    callback_data=f'del_{debt_id}_{page}'
+                )
+            ],
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'to_list'),
+                callback_data=f'debts_page_{page}'
+            )],
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'to_menu'),
+                callback_data='back_main'
+            )],
+        ])
+
+        await message.answer(text, reply_markup=kb)
+
+    except Exception as e:
+        print(f"❌ Ошибка в show_updated_debt_card: {e}")
+
+
+# === РЕДАКТИРОВАНИЕ ВАЛЮТЫ ===
+
+@router.callback_query(lambda c: c.data.startswith('editcur_'))
+async def edit_currency_callback(call: CallbackQuery, state: FSMContext):
+    """Обработка выбора валюты при редактировании"""
+    try:
+        _, currency, debt_id, page = call.data.split('_')
+        debt_id = int(debt_id)
+        page = int(page)
+        user_id = call.from_user.id
+
+        # Валидация валюты
+        if currency not in ['USD', 'UZS', 'EUR']:
+            await call.answer("❌ Неизвестная валюта")
+            return
+
+        debt = await get_debt_by_id(debt_id)
+        if not debt or debt['user_id'] != user_id:
+            await call.message.answer(await tr(user_id, 'not_found_or_no_access'))
+            return
+
+        await update_debt(debt_id, {'currency': currency})
+        await call.answer(await tr(user_id, 'changed'))
+
+        # Показываем обновленную карточку долга
+        await show_updated_debt_card_from_callback(call, user_id, debt_id, page)
+
+    except Exception as e:
+        print(f"❌ Ошибка в edit_currency_callback: {e}")
+        try:
+            await call.answer("❌ Ошибка изменения валюты")
+        except:
+            pass
+
+
+async def show_updated_debt_card_from_callback(call: CallbackQuery, user_id: int, debt_id: int, page: int):
+    """Показать обновленную карточку долга из callback"""
+    try:
+        user_data = await get_user_data(user_id)
+        notify_time = user_data.get('notify_time', '09:00')
+        updated_debt = await get_debt_by_id(debt_id)
+
+        if not updated_debt:
+            return
+
+        direction = updated_debt.get('direction', 'owed')
+        text_key = 'debt_card_owed' if direction == 'owed' else 'debt_card_owe'
+
+        text = await tr(
+            user_id, text_key,
+            person=safe_str(updated_debt['person']),
+            amount=safe_str(updated_debt['amount']),
+            currency=safe_str(updated_debt.get('currency', 'UZS')),
+            due=safe_str(updated_debt['due']),
+            comment=safe_str(updated_debt['comment']),
+            notify_time=notify_time
+        )
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'edit'),
+                callback_data=f'edit_{debt_id}_{page}'
+            )],
+            [
+                InlineKeyboardButton(
+                    text=await tr(user_id, 'close'),
+                    callback_data=f'close_{debt_id}_{page}'
+                ),
+                InlineKeyboardButton(
+                    text=await tr(user_id, 'extend'),
+                    callback_data=f'extend_{debt_id}_{page}'
+                ),
+                InlineKeyboardButton(
+                    text=await tr(user_id, 'delete'),
+                    callback_data=f'del_{debt_id}_{page}'
+                )
+            ],
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'to_list'),
+                callback_data=f'debts_page_{page}'
+            )],
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'to_menu'),
+                callback_data='back_main'
+            )],
+        ])
+
+        await safe_edit_message(call, text, kb)
+
+    except Exception as e:
+        print(f"❌ Ошибка в show_updated_debt_card_from_callback: {e}")
+
+
+# === ЗАКРЫТИЕ ДОЛГОВ ===
+
+@router.callback_query(lambda c: c.data.startswith('close_'))
+async def close_debt_confirm(call: CallbackQuery, state: FSMContext):
+    """Подтверждение закрытия долга"""
+    try:
+        debt_id = int(call.data.split('_')[1])
+        user_id = call.from_user.id
+
+        debt = await get_debt_by_id(debt_id)
+        if not debt or debt['user_id'] != user_id:
+            await call.message.answer(await tr(user_id, 'not_found_or_no_access'))
+            return
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'yes'),
+                callback_data=f'confirm_close_{debt_id}'
+            )],
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'no'),
+                callback_data='back_main'
+            )],
+        ])
+
+        confirm_text = await tr(user_id, 'confirm_close')
+        await call.message.edit_text(confirm_text, reply_markup=kb)
+
+    except Exception as e:
+        print(f"❌ Ошибка в close_debt_confirm: {e}")
+        try:
+            await call.answer("❌ Ошибка закрытия")
+        except:
+            pass
+
+
+@router.callback_query(lambda c: c.data.startswith('confirm_close_'))
+async def close_debt(call: CallbackQuery, state: FSMContext):
+    """Закрытие долга"""
+    try:
+        debt_id = int(call.data.split('_')[2])
+        user_id = call.from_user.id
+
+        debt = await get_debt_by_id(debt_id)
+        if not debt or debt['user_id'] != user_id:
+            await call.message.answer(await tr(user_id, 'not_found_or_no_access'))
+            return
+
+        await update_debt(debt_id, {'closed': True})
+
+        text = await tr(user_id, 'debt_closed')
+        markup = await main_menu(user_id)
+        await safe_edit_message(call, text, markup)
+
+    except Exception as e:
+        print(f"❌ Ошибка в close_debt: {e}")
+        try:
+            await call.answer("❌ Ошибка закрытия долга")
+        except:
+            pass
+
+
+# === ПРОДЛЕНИЕ СРОКА ДОЛГА ===
+
+@router.callback_query(lambda c: c.data.startswith('extend_'))
+async def extend_debt_start(call: CallbackQuery, state: FSMContext):
+    """Начало продления срока долга"""
+    try:
+        debt_id = int(call.data.split('_')[1])
+        user_id = call.from_user.id
+
+        debt = await get_debt_by_id(debt_id)
+        if not debt or debt['user_id'] != user_id:
+            await call.message.answer(await tr(user_id, 'not_found_or_no_access'))
+            return
+
+        await state.update_data(extend_debt_id=debt_id)
+        suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
+        prompt_text = await tr(user_id, 'due', suggest_date=suggest_date)
+        await call.message.edit_text(prompt_text)
+        await state.set_state(EditDebt.extend_due)
+
+    except Exception as e:
+        print(f"❌ Ошибка в extend_debt_start: {e}")
+        try:
+            await call.answer("❌ Ошибка продления")
+        except:
+            pass
+
+
+@router.message(EditDebt.extend_due)
+async def extend_debt_value(message: Message, state: FSMContext):
+    """Обработка новой даты для продления"""
+    try:
+        # Проверяем тип сообщения
+        if not is_text_message(message):
+            user_id = message.from_user.id
+            suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
+            error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
+            await message.answer(error_text)
+            return
+
+        data = await state.get_data()
+        user_id = message.from_user.id
+        val = message.text.strip()
+
+        try:
+            date_obj = datetime.strptime(val, '%Y-%m-%d')
+            if date_obj.date() < datetime.now().date():
+                await message.answer(await tr(user_id, 'date_in_past'))
+                return
+        except ValueError:
+            suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
+            error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
+            await message.answer(error_text)
+            return
+
+        # Обновляем дату
+        new_due = val  # Не добавляем 7 дней, используем точную дату
+        await update_debt(data['extend_debt_id'], {'due': new_due})
+
+        success_text = await tr(user_id, 'date_changed')
+        markup = await main_menu(user_id)
+        await message.answer(success_text, reply_markup=markup)
+        await state.clear()
+
+    except Exception as e:
+        print(f"❌ Ошибка в extend_debt_value: {e}")
+        try:
+            user_id = message.from_user.id
+            await state.clear()
+            error_text = await tr(user_id, 'update_error')
+            markup = await main_menu(user_id)
+            await message.answer(error_text, reply_markup=markup)
+        except:
+            pass
+
+
+# === ОЧИСТКА ВСЕХ ДОЛГОВ ===
+
+@router.callback_query(F.data == 'clear_all')
+async def clear_all_confirm(call: CallbackQuery, state: FSMContext):
+    """Подтверждение очистки всех долгов"""
+    try:
+        user_id = call.from_user.id
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'yes'),
+                callback_data='confirm_clear_all'
+            )],
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'no'),
+                callback_data='cancel_action'
+            )],
+        ])
+
+        confirm_text = await tr(user_id, 'clear_all_confirm')
+        await call.message.edit_text(confirm_text, reply_markup=kb)
+
+    except Exception as e:
+        print(f"❌ Ошибка в clear_all_confirm: {e}")
+        try:
+            await call.answer("❌ Ошибка")
+        except:
+            pass
+
+
+@router.callback_query(F.data == 'confirm_clear_all')
+async def clear_all(call: CallbackQuery, state: FSMContext):
+    """Очистить все долги"""
+    try:
+        user_id = call.from_user.id
+        await clear_user_debts(user_id)
+
+        text = await tr(user_id, 'all_deleted')
+        markup = await main_menu(user_id)
+        await safe_edit_message(call, text, markup)
+
+    except Exception as e:
+        print(f"❌ Ошибка в clear_all: {e}")
+        try:
+            await call.answer("❌ Ошибка очистки")
+        except:
+            pass
+
+
+@router.callback_query(F.data == 'cancel_action')
+async def cancel_action(call: CallbackQuery, state: FSMContext):
+    """Отмена действия"""
+    try:
+        user_id = call.from_user.id
+        text = await tr(user_id, 'cancelled')  # Используем правильный ключ перевода
+        markup = await main_menu(user_id)
+        await safe_edit_message(call, text, markup)
+
+    except Exception as e:
+        print(f"❌ Ошибка в cancel_action: {e}")
+        try:
+            await call.answer("❌ Ошибка отмены")
+        except:
+            pass

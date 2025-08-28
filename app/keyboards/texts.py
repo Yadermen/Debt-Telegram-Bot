@@ -96,7 +96,8 @@ LANGS = {
         'multiple_reminders': '⏰ У вас {count} напоминаний о долгах:',
         'process_interrupted': 'Вы хотите продолжить процесс создания?',
         'continue_process': '📝 Продолжить',
-        'cancel_and_menu': '🔙 Отменить и в меню'
+        'cancel_and_menu': '🔙 Отменить и в меню',
+        'date_in_past':'❌ Указанная дата уже прошла. Пожалуйста, выберите будущую дату.',
     },
     'uz': {
         'welcome': 'QarzNazoratBot-ga xush kelibsiz!\nAmalni tanlang:',
@@ -193,7 +194,8 @@ LANGS = {
         'debtor_name': 'Qarzdor {person}',
         'creditor_name': 'Kreditor {person}',
         'single_reminder': '⏰ Eslatma!\n\n{person} {amount} {currency} qaytarishi kerak\nMuddati: {due}',
-        'multiple_reminders': '⏰ Sizda {count} ta qarz eslatmalari bor:'
+        'multiple_reminders': '⏰ Sizda {count} ta qarz eslatmalari bor:',
+        'date_in_past':'❌ Ko‘rsatilgan sana o‘tib ketgan. Iltimos, kelajakdagi sanani tanlang.',
 
     }
 }

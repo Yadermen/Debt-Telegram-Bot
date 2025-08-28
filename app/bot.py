@@ -1,10 +1,10 @@
-
 import asyncio
 import os
 import sys
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
+import logging
 
 load_dotenv()
 
@@ -12,6 +12,17 @@ from .handlers import register_all_handlers
 from .database import init_db
 from .utils.scheduler import scheduler, schedule_all_reminders
 from .utils.broadcast import process_scheduled_messages
+
+# Настройка логирования для отслеживания ошибок SQLAlchemy
+logging.basicConfig(
+    level=logging.WARNING,  # Показывать только предупреждения и ошибки
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Скрываем избыточные логи SQLAlchemy
+logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
+logging.getLogger('sqlalchemy.pool').setLevel(logging.WARNING)
+
 # Получаем токен бота
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 if not BOT_TOKEN:
@@ -24,31 +35,61 @@ dp = Dispatcher(storage=MemoryStorage())
 
 scheduler.set_bot(bot)
 
+
+# Добавляем глобальный обработчик ошибок
+@dp.errors()
+async def error_handler(event, exception):
+    """Глобальный обработчик ошибок"""
+    # Логируем ошибку
+    print(f"❌ Ошибка в обработчике: {type(exception).__name__}: {exception}")
+
+    # Для ошибок SQLAlchemy пытаемся продолжить работу
+    if "IllegalStateChangeError" in str(exception):
+        print("⚠️ Ошибка состояния SQLAlchemy - игнорируем")
+        return True  # Продолжаем работу
+
+    # Для других критических ошибок логируем и продолжаем
+    return True
+
+
 async def on_startup():
     """Функция, выполняемая при запуске бота"""
     print("🚀 Запуск бота...")
 
-    # Инициализируем базу данных
-    await init_db()
-    print("✅ База данных инициализирована")
+    try:
+        # Инициализируем базу данных
+        await init_db()
+        print("✅ База данных инициализирована")
+    except Exception as e:
+        print(f"❌ Ошибка инициализации БД: {e}")
+        return
 
-    # Запускаем планировщик
-    if not scheduler.running:
-        await scheduler.start()
-        print("✅ Планировщик запущен")
+    try:
+        # Запускаем планировщик
+        if not scheduler.running:
+            await scheduler.start()
+            print("✅ Планировщик запущен")
+    except Exception as e:
+        print(f"❌ Ошибка запуска планировщика: {e}")
 
-    # Планируем напоминания
-    await schedule_all_reminders()
-    print("✅ Напоминания запланированы")
+    try:
+        # Планируем напоминания
+        await schedule_all_reminders()
+        print("✅ Напоминания запланированы")
+    except Exception as e:
+        print(f"❌ Ошибка планирования напоминаний: {e}")
 
-    # Добавляем задачу проверки запланированных сообщений каждую минуту
-    scheduler.add_job(
-        process_scheduled_messages,
-        'interval',
-        minutes=1,
-        id='check_scheduled_messages'
-    )
-    print("✅ Задача проверки сообщений добавлена")
+    try:
+        # Добавляем задачу проверки запланированных сообщений каждую минуту
+        scheduler.add_job(
+            process_scheduled_messages,
+            'interval',
+            minutes=1,
+            id='check_scheduled_messages'
+        )
+        print("✅ Задача проверки сообщений добавлена")
+    except Exception as e:
+        print(f"❌ Ошибка добавления задачи: {e}")
 
     print("🎉 Бот успешно запущен!")
 
@@ -57,12 +98,19 @@ async def on_shutdown():
     """Функция, выполняемая при остановке бота"""
     print("🛑 Остановка бота...")
 
-    if scheduler.running:
-        scheduler.shutdown()
-        print("✅ Планировщик остановлен")
+    try:
+        if scheduler.running:
+            scheduler.shutdown()
+            print("✅ Планировщик остановлен")
+    except Exception as e:
+        print(f"❌ Ошибка остановки планировщика: {e}")
 
-    await bot.session.close()
-    print("✅ Сессия бота закрыта")
+    try:
+        await bot.session.close()
+        print("✅ Сессия бота закрыта")
+    except Exception as e:
+        print(f"❌ Ошибка закрытия сессии бота: {e}")
+
     print("👋 Бот остановлен!")
 
 

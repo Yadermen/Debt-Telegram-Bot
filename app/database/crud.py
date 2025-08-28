@@ -1,3 +1,5 @@
+import asyncio
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update, and_, func
@@ -337,73 +339,61 @@ async def get_all_users_with_notifications() -> List[Dict[str, Any]]:
 
 
 async def get_all_users() -> List[Dict[str, Any]]:
-    """Получить всех пользователей со статистикой"""
-    async with get_db() as session:
-        # Подзапрос для активных долгов
-        active_debts_subq = (
-            select(func.count(Debt.id))
-            .where(and_(
-                Debt.user_id == User.user_id,
-                Debt.closed == False,
-                Debt.is_active == True
-            ))
-        ).scalar_subquery()
-
-        # Подзапрос для всех долгов
-        total_debts_subq = (
-            select(func.count(Debt.id))
-            .where(and_(
-                Debt.user_id == User.user_id,
-                Debt.is_active == True
-            ))
-        ).scalar_subquery()
-
-        result = await session.execute(
-            select(
-                User.user_id,
-                User.lang,
-                User.notify_time,
-                active_debts_subq.label('active_debts'),
-                total_debts_subq.label('total_debts')
+    """Получить всех активных пользователей"""
+    try:
+        async with get_db() as session:
+            result = await session.execute(
+                select(User)
+                .where(User.is_active == True)
+                .order_by(User.user_id)
             )
-            .where(User.is_active == True)
-            .order_by(User.user_id)
-        )
+            users_rows = result.scalars().all()
 
-        rows = result.all()
-        users = []
-        for row in rows:
-            users.append({
-                'user_id': row.user_id,
-                'lang': row.lang,
-                'notify_time': row.notify_time,
-                'active_debts': row.active_debts or 0,
-                'total_debts': row.total_debts or 0
-            })
-        return users
+            users = []
+            for user in users_rows:
+                users.append({
+                    'user_id': user.user_id,
+                    'lang': user.lang,
+                    'notify_time': user.notify_time
+                })
+            return users
+    except Exception as e:
+        print(f"❌ Ошибка получения списка пользователей: {e}")
+        return []
 
 
 async def get_user_count() -> int:
     """Получить количество активных пользователей"""
-    async with get_db() as session:
-        result = await session.execute(
-            select(func.count(User.user_id))
-            .where(User.is_active == True)
-        )
-        return result.scalar() or 0
+    try:
+        async with get_db() as session:
+            result = await session.execute(
+                select(func.count(User.user_id))
+                .where(User.is_active == True)
+            )
+            count = result.scalar()
+            return count if count is not None else 0
+    except Exception as e:
+        print(f"❌ Ошибка получения количества пользователей: {e}")
+        return 0
+
 
 
 async def get_active_debts_count() -> int:
     """Получить количество активных долгов"""
-    async with get_db() as session:
-        result = await session.execute(
-            select(func.count(Debt.id))
-            .where(and_(
-                Debt.closed == False,
-                Debt.is_active == True
-            ))
-        )
-        return result.scalar() or 0
+    try:
+        async with get_db() as session:
+            result = await session.execute(
+                select(func.count(Debt.id))
+                .where(and_(
+                    Debt.closed == False,
+                    Debt.is_active == True
+                ))
+            )
+            count = result.scalar()
+            return count if count is not None else 0
+    except Exception as e:
+        print(f"❌ Ошибка получения количества активных долгов: {e}")
+        return 0
 
 
 # === SCHEDULED MESSAGES ===
@@ -485,3 +475,19 @@ async def delete_scheduled_message(message_id: int) -> bool:
             .values(is_active=False)
         )
         return result.rowcount > 0
+
+async def execute_query_safely(query_func, *args, **kwargs):
+    """
+    Безопасное выполнение запроса с обработкой ошибок сессии
+    """
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            return await query_func(*args, **kwargs)
+        except Exception as e:
+            if "IllegalStateChangeError" in str(e) and attempt < max_retries - 1:
+                print(f"⚠️ Повтор запроса после ошибки сессии (попытка {attempt + 1})")
+                await asyncio.sleep(0.1)
+                continue
+            else:
+                raise e

@@ -1,14 +1,29 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, scoped_session
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from contextlib import asynccontextmanager
 from app.config import DB_PATH
 from .models import Base
 
 DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
 
-engine = create_async_engine(DATABASE_URL, echo=False)
-AsyncSessionLocal = scoped_session(sessionmaker(class_=AsyncSession, bind=engine))
+# Создаем асинхронный движок без пула соединений для SQLite
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    # Для SQLite убираем настройки пула
+    pool_pre_ping=False,
+    connect_args={'check_same_thread': False}
+)
+
+# ИСПРАВЛЕНО: Используем async_sessionmaker вместо scoped_session
+AsyncSessionLocal = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=True,
+    autocommit=False
+)
 
 
 async def init_db():
@@ -19,13 +34,30 @@ async def init_db():
 
 @asynccontextmanager
 async def get_db():
-    """Контекстный менеджер для получения сессии базы данных"""
+    """Исправленный контекстный менеджер для получения сессии базы данных"""
     session = AsyncSessionLocal()
     try:
         yield session
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        raise
+        # Коммитим только если есть pending изменения
+        if session.dirty or session.new or session.deleted:
+            await session.commit()
+    except Exception as e:
+        # Откатываем транзакцию при ошибке
+        try:
+            await session.rollback()
+        except Exception:
+            pass  # Игнорируем ошибки отката
+        raise e
     finally:
-        await session.close()
+        # Безопасно закрываем сессию
+        try:
+            # Проверяем, не закрыта ли уже сессия
+            if session.is_active:
+                await session.close()
+        except Exception as close_error:
+            print(f"⚠️ Предупреждение при закрытии сессии: {close_error}")
+            # Пытаемся принудительно закрыть
+            try:
+                await session.invalidate()
+            except Exception:
+                pass
