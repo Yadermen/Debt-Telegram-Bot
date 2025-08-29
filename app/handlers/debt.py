@@ -1,5 +1,5 @@
 """
-Обработчики для работы с долгами - исправленная версия
+Обработчики для работы с долгами - исправленная версия с полной обработкой ошибок
 """
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -7,19 +7,22 @@ from aiogram.fsm.context import FSMContext
 from datetime import datetime, timedelta
 import re
 
-from ..database import (
-    add_debt, get_open_debts, get_debt_by_id, update_debt,
-    soft_delete_debt, clear_user_debts, get_user_data, delete_debt
-)
-from ..keyboards import (
-    tr, main_menu, currency_keyboard, direction_keyboard,
-    skip_comment_keyboard, menu_button, debt_actions_keyboard,
-    confirm_keyboard, edit_fields_keyboard, currency_edit_keyboard,
-    CallbackData, DynamicCallbacks, debts_list_keyboard_paginated,
-    debts_list_keyboard, safe_str
-)
-from ..states import AddDebt, EditDebt
-from ..utils import safe_edit_message
+try:
+    from ..database import (
+        add_debt, get_open_debts, get_debt_by_id, update_debt,
+        soft_delete_debt, clear_user_debts, get_user_data, delete_debt
+    )
+    from ..keyboards import (
+        tr, main_menu, currency_keyboard, direction_keyboard,
+        skip_comment_keyboard, menu_button, debt_actions_keyboard,
+        confirm_keyboard, edit_fields_keyboard, currency_edit_keyboard,
+        CallbackData, DynamicCallbacks, debts_list_keyboard_paginated,
+        debts_list_keyboard, safe_str
+    )
+    from ..states import AddDebt, EditDebt
+    from ..utils import safe_edit_message
+except ImportError as e:
+    print(f"❌ Ошибка импорта в debt.py: {e}")
 
 router = Router()
 
@@ -28,18 +31,26 @@ router = Router()
 
 def is_text_message(message: Message) -> bool:
     """Проверить, что сообщение содержит только текст"""
-    return message.content_type == 'text' and message.text and message.text.strip()
+    try:
+        return message.content_type == 'text' and message.text and message.text.strip()
+    except Exception as e:
+        print(f"❌ Ошибка в is_text_message: {e}")
+        return False
 
 
 def validate_person_name(name: str) -> bool:
     """Валидация имени человека (поддерживает узбекские символы)"""
-    if not name or len(name.strip()) < 1 or len(name.strip()) > 50:
-        return False
+    try:
+        if not name or len(name.strip()) < 1 or len(name.strip()) > 50:
+            return False
 
-    # Разрешаем латиницу, кириллицу, цифры, пробелы и основные знаки препинания
-    # Включаем узбекские специальные символы: ʻ, ʼ, ʾ, ʿ, ğ, ž, ç, ş, ü, ö, и др.
-    allowed_pattern = r"^[\w\s\-\.'ʻʼʾʿğžçşüöıəȯḩṭẓ]+$"
-    return bool(re.match(allowed_pattern, name.strip(), re.IGNORECASE | re.UNICODE))
+        # Разрешаем латиницу, кириллицу, цифры, пробелы и основные знаки препинания
+        # Включаем узбекские специальные символы: ʻ, ʼ, ʾ, ʿ, ğ, ž, ç, ş, ü, ö, и др.
+        allowed_pattern = r"^[\w\s\-\.'ʻʼʾʿğžçşüöıəȯḩṭẓ]+$"
+        return bool(re.match(allowed_pattern, name.strip(), re.IGNORECASE | re.UNICODE))
+    except Exception as e:
+        print(f"❌ Ошибка в validate_person_name: {e}")
+        return False
 
 
 # === НАВИГАЦИЯ ===
@@ -223,46 +234,63 @@ async def add_debt_start(call: CallbackQuery, state: FSMContext):
 @router.message(AddDebt.person)
 async def add_debt_person_simple(message: Message, state: FSMContext):
     """Получение имени должника с поддержкой узбекского языка"""
+    user_id = message.from_user.id
+
     try:
         # Проверяем тип сообщения
         if not is_text_message(message):
-            user_id = message.from_user.id
-            error_text = await tr(user_id, 'text_only_please')
+            try:
+                error_text = await tr(user_id, 'text_only_please')
 
-            # Создаем кнопку возврата в меню
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text=await tr(user_id, 'to_menu'),
-                    callback_data='back_main'
-                )]
-            ])
+                # Создаем кнопку возврата в меню
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text=await tr(user_id, 'to_menu'),
+                        callback_data='back_main'
+                    )]
+                ])
 
-            await message.answer(error_text, reply_markup=kb)
-            await state.clear()
-            return
+                await message.answer(error_text, reply_markup=kb)
+                await state.clear()
+                return
+            except Exception as inner_e:
+                print(f"❌ Ошибка при обработке нетекстового сообщения: {inner_e}")
+                await state.clear()
+                return
 
         person_name = message.text.strip()
 
         # Валидация имени с поддержкой узбекских символов
         if not validate_person_name(person_name):
-            user_id = message.from_user.id
-            error_text = await tr(user_id, 'person_name_invalid')
-            await message.answer(error_text)
-            return
+            try:
+                error_text = await tr(user_id, 'person_name_invalid')
+                await message.answer(error_text)
+                return
+            except Exception as inner_e:
+                print(f"❌ Ошибка при отправке сообщения об ошибке валидации: {inner_e}")
+                await state.clear()
+                return
 
         await state.update_data(person=person_name)
-        user_id = message.from_user.id
 
-        currency_text = await tr(user_id, 'currency')
-        kb = await currency_keyboard(user_id)
-
-        await message.answer(currency_text, reply_markup=kb)
-        await state.set_state(AddDebt.currency)
+        try:
+            currency_text = await tr(user_id, 'currency')
+            kb = await currency_keyboard(user_id)
+            await message.answer(currency_text, reply_markup=kb)
+            await state.set_state(AddDebt.currency)
+        except Exception as inner_e:
+            print(f"❌ Ошибка при переходе к выбору валюты: {inner_e}")
+            await state.clear()
+            try:
+                error_text = await tr(user_id, 'system_error')
+                markup = await main_menu(user_id)
+                await message.answer(error_text, reply_markup=markup)
+            except:
+                pass
 
     except Exception as e:
-        print(f"❌ Ошибка в add_debt_person_simple: {e}")
+        print(f"❌ Критическая ошибка в add_debt_person_simple: {e}")
         try:
-            user_id = message.from_user.id
             await state.clear()
             error_text = await tr(user_id, 'system_error')
             markup = await main_menu(user_id)
@@ -301,42 +329,64 @@ async def add_debt_currency_simple(call: CallbackQuery, state: FSMContext):
 @router.message(AddDebt.amount)
 async def add_debt_amount_simple(message: Message, state: FSMContext):
     """Получение суммы долга"""
+    user_id = message.from_user.id
+
     try:
         # Проверяем тип сообщения
         if not is_text_message(message):
-            user_id = message.from_user.id
-            error_text = await tr(user_id, 'amount_wrong')
-            await message.answer(error_text)
-            return
+            try:
+                error_text = await tr(user_id, 'amount_wrong')
+                await message.answer(error_text)
+                return
+            except Exception as inner_e:
+                print(f"❌ Ошибка при отправке сообщения об ошибке типа: {inner_e}")
+                await state.clear()
+                return
 
         amount_text = message.text.strip()
 
         # Проверяем, что это число
         if not amount_text.isdigit():
-            user_id = message.from_user.id
-            error_text = await tr(user_id, 'amount_wrong')
-            await message.answer(error_text)
-            return
+            try:
+                error_text = await tr(user_id, 'amount_wrong')
+                await message.answer(error_text)
+                return
+            except Exception as inner_e:
+                print(f"❌ Ошибка при отправке сообщения об ошибке числа: {inner_e}")
+                await state.clear()
+                return
 
         amount = int(amount_text)
         if amount <= 0 or amount > 999999999:
-            user_id = message.from_user.id
-            error_text = await tr(user_id, 'amount_range_error')
-            await message.answer(error_text)
-            return
+            try:
+                error_text = await tr(user_id, 'amount_range_error')
+                await message.answer(error_text)
+                return
+            except Exception as inner_e:
+                print(f"❌ Ошибка при отправке сообщения об ошибке диапазона: {inner_e}")
+                await state.clear()
+                return
 
         await state.update_data(amount=amount)
-        user_id = message.from_user.id
 
-        suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
-        due_text = await tr(user_id, 'due', suggest_date=suggest_date)
-        await message.answer(due_text)
-        await state.set_state(AddDebt.due)
+        try:
+            suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
+            due_text = await tr(user_id, 'due', suggest_date=suggest_date)
+            await message.answer(due_text)
+            await state.set_state(AddDebt.due)
+        except Exception as inner_e:
+            print(f"❌ Ошибка при переходе к дате: {inner_e}")
+            await state.clear()
+            try:
+                error_text = await tr(user_id, 'system_error')
+                markup = await main_menu(user_id)
+                await message.answer(error_text, reply_markup=markup)
+            except:
+                pass
 
     except Exception as e:
-        print(f"❌ Ошибка в add_debt_amount_simple: {e}")
+        print(f"❌ Критическая ошибка в add_debt_amount_simple: {e}")
         try:
-            user_id = message.from_user.id
             await state.clear()
             error_text = await tr(user_id, 'system_error')
             markup = await main_menu(user_id)
@@ -348,14 +398,20 @@ async def add_debt_amount_simple(message: Message, state: FSMContext):
 @router.message(AddDebt.due)
 async def add_debt_due_simple(message: Message, state: FSMContext):
     """Получение срока возврата"""
+    user_id = message.from_user.id
+
     try:
         # Проверяем тип сообщения
         if not is_text_message(message):
-            user_id = message.from_user.id
-            suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
-            error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
-            await message.answer(error_text)
-            return
+            try:
+                suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
+                error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
+                await message.answer(error_text)
+                return
+            except Exception as inner_e:
+                print(f"❌ Ошибка при отправке сообщения об ошибке типа даты: {inner_e}")
+                await state.clear()
+                return
 
         due_text = message.text.strip()
 
@@ -363,28 +419,44 @@ async def add_debt_due_simple(message: Message, state: FSMContext):
         try:
             due_date = datetime.strptime(due_text, '%Y-%m-%d')
             if due_date.date() < datetime.now().date():
-                user_id = message.from_user.id
-                await message.answer(await tr(user_id, 'date_in_past'))
-                return
+                try:
+                    await message.answer(await tr(user_id, 'date_in_past'))
+                    return
+                except Exception as inner_e:
+                    print(f"❌ Ошибка при отправке сообщения о прошлой дате: {inner_e}")
+                    await state.clear()
+                    return
         except ValueError:
-            user_id = message.from_user.id
-            suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
-            error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
-            await message.answer(error_text)
-            return
+            try:
+                suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
+                error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
+                await message.answer(error_text)
+                return
+            except Exception as inner_e:
+                print(f"❌ Ошибка при отправке сообщения об ошибке формата даты: {inner_e}")
+                await state.clear()
+                return
 
         await state.update_data(due=due_text)
-        user_id = message.from_user.id
 
-        direction_text = await tr(user_id, 'direction')
-        kb = await direction_keyboard(user_id)
-        await message.answer(direction_text, reply_markup=kb)
-        await state.set_state(AddDebt.direction)
+        try:
+            direction_text = await tr(user_id, 'direction')
+            kb = await direction_keyboard(user_id)
+            await message.answer(direction_text, reply_markup=kb)
+            await state.set_state(AddDebt.direction)
+        except Exception as inner_e:
+            print(f"❌ Ошибка при переходе к направлению: {inner_e}")
+            await state.clear()
+            try:
+                error_text = await tr(user_id, 'system_error')
+                markup = await main_menu(user_id)
+                await message.answer(error_text, reply_markup=markup)
+            except:
+                pass
 
     except Exception as e:
-        print(f"❌ Ошибка в add_debt_due_simple: {e}")
+        print(f"❌ Критическая ошибка в add_debt_due_simple: {e}")
         try:
-            user_id = message.from_user.id
             await state.clear()
             error_text = await tr(user_id, 'system_error')
             markup = await main_menu(user_id)
@@ -422,6 +494,8 @@ async def add_debt_direction_simple(call: CallbackQuery, state: FSMContext):
 @router.message(AddDebt.comment)
 async def add_debt_comment_simple(message: Message, state: FSMContext):
     """Получение комментария"""
+    user_id = message.from_user.id
+
     try:
         # Проверяем тип сообщения
         comment = ""
@@ -429,16 +503,17 @@ async def add_debt_comment_simple(message: Message, state: FSMContext):
             comment = message.text.strip()
         else:
             # Если не текст, используем пустой комментарий
-            user_id = message.from_user.id
-            warning_text = await tr(user_id, 'comment_text_only')
-            await message.answer(warning_text)
+            try:
+                warning_text = await tr(user_id, 'comment_text_only')
+                await message.answer(warning_text)
+            except Exception as inner_e:
+                print(f"❌ Ошибка при отправке предупреждения о комментарии: {inner_e}")
 
-        await finish_add_debt(message.from_user.id, state, comment, message)
+        await finish_add_debt(user_id, state, comment, message)
 
     except Exception as e:
-        print(f"❌ Ошибка в add_debt_comment_simple: {e}")
+        print(f"❌ Критическая ошибка в add_debt_comment_simple: {e}")
         try:
-            user_id = message.from_user.id
             await state.clear()
             error_text = await tr(user_id, 'system_error')
             markup = await main_menu(user_id)
@@ -471,16 +546,21 @@ async def finish_add_debt(user_id: int, state: FSMContext, comment: str, message
         for field in required_fields:
             if field not in data:
                 print(f"❌ Отсутствует поле {field} в данных состояния")
-                error_text = await tr(user_id, 'incomplete_data')
-                kb = await main_menu(user_id)
+                try:
+                    error_text = await tr(user_id, 'incomplete_data')
+                    kb = await main_menu(user_id)
 
-                if message:
-                    await message.answer(error_text, reply_markup=kb)
-                elif call:
-                    await call.message.edit_text(error_text, reply_markup=kb)
+                    if message:
+                        await message.answer(error_text, reply_markup=kb)
+                    elif call:
+                        await call.message.edit_text(error_text, reply_markup=kb)
 
-                await state.clear()
-                return
+                    await state.clear()
+                    return
+                except Exception as inner_e:
+                    print(f"❌ Ошибка при отправке сообщения о неполных данных: {inner_e}")
+                    await state.clear()
+                    return
 
         # Подготавливаем данные долга
         debt_data = {
@@ -493,25 +573,40 @@ async def finish_add_debt(user_id: int, state: FSMContext, comment: str, message
             'date': datetime.now().strftime('%Y-%m-%d')
         }
 
-        # Сохраняем долг в базе
-        debt_id = await add_debt(user_id, debt_data)
+        try:
+            # Сохраняем долг в базе
+            debt_id = await add_debt(user_id, debt_data)
 
-        # Очищаем состояние
-        await state.clear()
+            # Очищаем состояние
+            await state.clear()
 
-        # Отправляем подтверждение
-        success_text = await tr(user_id, 'debt_saved')
-        kb = await main_menu(user_id)
+            # Отправляем подтверждение
+            success_text = await tr(user_id, 'debt_saved')
+            kb = await main_menu(user_id)
 
-        if message:
-            await message.answer(success_text, reply_markup=kb)
-        elif call:
-            await call.message.edit_text(success_text, reply_markup=kb)
+            if message:
+                await message.answer(success_text, reply_markup=kb)
+            elif call:
+                await call.message.edit_text(success_text, reply_markup=kb)
 
-        print(f"✅ Долг #{debt_id} добавлен пользователем {user_id}")
+            print(f"✅ Долг #{debt_id} добавлен пользователем {user_id}")
+
+        except Exception as db_e:
+            print(f"❌ Ошибка сохранения в БД: {db_e}")
+            await state.clear()
+            try:
+                error_text = await tr(user_id, 'save_debt_error')
+                kb = await main_menu(user_id)
+
+                if message:
+                    await message.answer(error_text, reply_markup=kb)
+                elif call:
+                    await call.message.edit_text(error_text, reply_markup=kb)
+            except Exception as msg_e:
+                print(f"❌ Ошибка отправки сообщения об ошибке БД: {msg_e}")
 
     except Exception as e:
-        print(f"❌ Ошибка в finish_add_debt: {e}")
+        print(f"❌ Критическая ошибка в finish_add_debt: {e}")
         try:
             # В случае ошибки очищаем состояние и возвращаем в меню
             await state.clear()
@@ -523,7 +618,7 @@ async def finish_add_debt(user_id: int, state: FSMContext, comment: str, message
             elif call:
                 await call.message.edit_text(error_text, reply_markup=kb)
         except Exception as inner_e:
-            print(f"❌ Критическая ошибка в finish_add_debt: {inner_e}")
+            print(f"❌ Критическая ошибка в finish_add_debt cleanup: {inner_e}")
 
 
 # === УДАЛЕНИЕ ДОЛГОВ ===
@@ -726,77 +821,92 @@ async def edit_debt_field(call: CallbackQuery, state: FSMContext):
 @router.message(EditDebt.edit_value)
 async def edit_debt_value(message: Message, state: FSMContext):
     """Обработка нового значения поля"""
+    user_id = message.from_user.id
+
     try:
         # Проверяем тип сообщения
         if not is_text_message(message):
-            user_id = message.from_user.id
-            error_text = await tr(user_id, 'text_only_please')
-            await message.answer(error_text)
-            return
-
-        data = await state.get_data()
-        user_id = message.from_user.id
-        debt_id = data.get('edit_debt_id')
-        field = data.get('edit_field')
-        page = data.get('edit_page', 0)
-        val = message.text.strip()
-
-        debt = await get_debt_by_id(debt_id)
-        if not debt or debt['user_id'] != user_id:
-            await message.answer(await tr(user_id, 'not_found_or_no_access'))
-            return
-
-        updates = {}
-
-        # Валидация в зависимости от поля
-        if field == 'amount':
-            if not val.isdigit():
-                await message.answer(await tr(user_id, 'amount_wrong'))
-                return
-            amount = int(val)
-            if amount <= 0 or amount > 999999999:
-                await message.answer(await tr(user_id, 'amount_range_error'))
-                return
-            updates['amount'] = amount
-
-        elif field == 'due':
             try:
-                date_obj = datetime.strptime(val, '%Y-%m-%d')
-                if date_obj.date() < datetime.now().date():
-                    await message.answer(await tr(user_id, 'date_in_past'))
+                error_text = await tr(user_id, 'text_only_please')
+                await message.answer(error_text)
+                return
+            except Exception as inner_e:
+                print(f"❌ Ошибка при отправке сообщения об ошибке типа в редактировании: {inner_e}")
+                await state.clear()
+                return
+
+        try:
+            data = await state.get_data()
+            debt_id = data.get('edit_debt_id')
+            field = data.get('edit_field')
+            page = data.get('edit_page', 0)
+            val = message.text.strip()
+
+            debt = await get_debt_by_id(debt_id)
+            if not debt or debt['user_id'] != user_id:
+                await message.answer(await tr(user_id, 'not_found_or_no_access'))
+                return
+
+            updates = {}
+
+            # Валидация в зависимости от поля
+            if field == 'amount':
+                if not val.isdigit():
+                    await message.answer(await tr(user_id, 'amount_wrong'))
                     return
-            except ValueError:
-                suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
-                await message.answer(await tr(user_id, 'due_wrong', suggest_date=suggest_date))
-                return
-            updates['due'] = val
+                amount = int(val)
+                if amount <= 0 or amount > 999999999:
+                    await message.answer(await tr(user_id, 'amount_range_error'))
+                    return
+                updates['amount'] = amount
 
-        elif field == 'person':
-            if not validate_person_name(val):
-                await message.answer(await tr(user_id, 'person_name_invalid'))
-                return
-            updates['person'] = val
+            elif field == 'due':
+                try:
+                    date_obj = datetime.strptime(val, '%Y-%m-%d')
+                    if date_obj.date() < datetime.now().date():
+                        await message.answer(await tr(user_id, 'date_in_past'))
+                        return
+                except ValueError:
+                    suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
+                    await message.answer(await tr(user_id, 'due_wrong', suggest_date=suggest_date))
+                    return
+                updates['due'] = val
 
-        elif field == 'comment':
-            updates['comment'] = val
-        else:
-            updates[field] = val
+            elif field == 'person':
+                if not validate_person_name(val):
+                    await message.answer(await tr(user_id, 'person_name_invalid'))
+                    return
+                updates['person'] = val
 
-        # Обновляем долг в базе
-        await update_debt(debt_id, updates)
+            elif field == 'comment':
+                updates['comment'] = val
+            else:
+                updates[field] = val
 
-        # Показываем успешное сообщение
-        success_text = await tr(user_id, 'changed')
-        await message.answer(success_text)
+            # Обновляем долг в базе
+            await update_debt(debt_id, updates)
 
-        # Получаем обновленные данные долга и показываем карточку
-        await show_updated_debt_card(message, user_id, debt_id, page)
-        await state.clear()
+            # Показываем успешное сообщение
+            success_text = await tr(user_id, 'changed')
+            await message.answer(success_text)
+
+            # Получаем обновленные данные долга и показываем карточку
+            await show_updated_debt_card(message, user_id, debt_id, page)
+            await state.clear()
+
+        except Exception as process_e:
+            print(f"❌ Ошибка обработки редактирования: {process_e}")
+            await state.clear()
+            try:
+                error_text = await tr(user_id, 'update_error')
+                markup = await main_menu(user_id)
+                await message.answer(error_text, reply_markup=markup)
+            except:
+                pass
 
     except Exception as e:
-        print(f"❌ Ошибка в edit_debt_value: {e}")
+        print(f"❌ Критическая ошибка в edit_debt_value: {e}")
         try:
-            user_id = message.from_user.id
             await state.clear()
             error_text = await tr(user_id, 'update_error')
             markup = await main_menu(user_id)
@@ -1049,43 +1159,58 @@ async def extend_debt_start(call: CallbackQuery, state: FSMContext):
 @router.message(EditDebt.extend_due)
 async def extend_debt_value(message: Message, state: FSMContext):
     """Обработка новой даты для продления"""
+    user_id = message.from_user.id
+
     try:
         # Проверяем тип сообщения
         if not is_text_message(message):
-            user_id = message.from_user.id
-            suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
-            error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
-            await message.answer(error_text)
-            return
-
-        data = await state.get_data()
-        user_id = message.from_user.id
-        val = message.text.strip()
+            try:
+                suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
+                error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
+                await message.answer(error_text)
+                return
+            except Exception as inner_e:
+                print(f"❌ Ошибка при отправке сообщения об ошибке типа в продлении: {inner_e}")
+                await state.clear()
+                return
 
         try:
-            date_obj = datetime.strptime(val, '%Y-%m-%d')
-            if date_obj.date() < datetime.now().date():
-                await message.answer(await tr(user_id, 'date_in_past'))
+            data = await state.get_data()
+            val = message.text.strip()
+
+            try:
+                date_obj = datetime.strptime(val, '%Y-%m-%d')
+                if date_obj.date() < datetime.now().date():
+                    await message.answer(await tr(user_id, 'date_in_past'))
+                    return
+            except ValueError:
+                suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
+                error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
+                await message.answer(error_text)
                 return
-        except ValueError:
-            suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
-            error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
-            await message.answer(error_text)
-            return
 
-        # Обновляем дату
-        new_due = val  # Не добавляем 7 дней, используем точную дату
-        await update_debt(data['extend_debt_id'], {'due': new_due})
+            # Обновляем дату
+            new_due = val  # Не добавляем 7 дней, используем точную дату
+            await update_debt(data['extend_debt_id'], {'due': new_due})
 
-        success_text = await tr(user_id, 'date_changed')
-        markup = await main_menu(user_id)
-        await message.answer(success_text, reply_markup=markup)
-        await state.clear()
+            success_text = await tr(user_id, 'date_changed')
+            markup = await main_menu(user_id)
+            await message.answer(success_text, reply_markup=markup)
+            await state.clear()
+
+        except Exception as process_e:
+            print(f"❌ Ошибка обработки продления: {process_e}")
+            await state.clear()
+            try:
+                error_text = await tr(user_id, 'update_error')
+                markup = await main_menu(user_id)
+                await message.answer(error_text, reply_markup=markup)
+            except:
+                pass
 
     except Exception as e:
-        print(f"❌ Ошибка в extend_debt_value: {e}")
+        print(f"❌ Критическая ошибка в extend_debt_value: {e}")
         try:
-            user_id = message.from_user.id
             await state.clear()
             error_text = await tr(user_id, 'update_error')
             markup = await main_menu(user_id)
