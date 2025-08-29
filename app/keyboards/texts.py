@@ -99,6 +99,8 @@ LANGS = {
         'cancel_and_menu': '🔙 Отменить и в меню',
         'date_in_past':'❌ Указанная дата уже прошла. Пожалуйста, выберите будущую дату.',
         'process_cancelled': '❌ Процесс был отменён. Действие не завершено.',
+        'continue_edit': 'Продолжить редактирование',
+        'text_only_please': 'Только текст, пожалуйста',
     },
     'uz': {
         'welcome': 'QarzNazoratBot-ga xush kelibsiz!\nAmalni tanlang:',
@@ -198,6 +200,8 @@ LANGS = {
         'multiple_reminders': '⏰ Sizda {count} ta qarz eslatmalari bor:',
         'date_in_past':'❌ Ko‘rsatilgan sana o‘tib ketgan. Iltimos, kelajakdagi sanani tanlang.',
         'process_cancelled': '❌ Jarayon bekor qilindi. Amal yakunlanmadi.',
+        'continue_edit': 'Tahrirlashni davom ettirish',
+        'text_only_please': 'Faqat matn, iltimos',
 
     }
 }
