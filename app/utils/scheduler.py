@@ -211,14 +211,7 @@ class ReminderScheduler:
                     print(f"❌ Ошибка планирования напоминаний для пользователя {user_id}: {e}")
 
             # Также планируем общую проверку просроченных долгов каждый час
-            self.scheduler.add_job(
-                self.send_due_reminders,
-                'cron',
-                hour='*',  # Каждый час
-                minute=0,
-                id='send_due_reminders',
-                replace_existing=True
-            )
+
 
             print(f"✅ Перепланирование завершено. Запланировано {scheduled_count} пользовательских напоминаний")
 
