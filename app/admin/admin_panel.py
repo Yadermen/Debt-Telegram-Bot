@@ -9,11 +9,11 @@ from threading import Thread
 
 load_dotenv()
 
-from .handlers import register_all_handlers
-from .database import init_db
-from .utils.scheduler import scheduler, schedule_all_reminders
-from .utils.broadcast import process_scheduled_messages
-from .config import (
+from app.handlers import register_all_handlers
+from app.database import init_db
+from app.utils.scheduler import scheduler, schedule_all_reminders
+from app.utils.broadcast import process_scheduled_messages
+from app.config import (
     ADMIN_HOST, ADMIN_PORT, ADMIN_USERNAME, ADMIN_PASSWORD,
     ADMIN_AUTO_START, ADMIN_ALLOWED_IPS
 )
