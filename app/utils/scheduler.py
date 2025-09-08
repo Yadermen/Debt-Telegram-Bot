@@ -74,6 +74,7 @@ class ReminderScheduler:
         except Exception as e:
             print(f"❌ Ошибка в send_due_reminders: {e}")
 
+
     async def send_daily_reminders(self, user_id: int):
         """
         Отправить ежедневные напоминания конкретному пользователю
@@ -85,8 +86,8 @@ class ReminderScheduler:
         try:
             from app.database import get_open_debts
             from app.keyboards import tr, safe_str
+            from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 
-            # Получаем долги пользователя
             debts = await get_open_debts(user_id)
 
             if not debts:
@@ -109,7 +110,6 @@ class ReminderScheduler:
             if not upcoming_debts:
                 return
 
-            # Формируем сообщение
             message_lines = [await tr(user_id, 'daily_reminder_header')]
 
             for debt, days_left in upcoming_debts:
@@ -134,9 +134,17 @@ class ReminderScheduler:
 
             message_text = '\n\n'.join(message_lines)
 
-            # Отправляем напоминание
-            await self.bot.send_message(user_id, message_text)
-            print(f"✅ Ежедневное напоминание отправлено пользователю {user_id}")
+            # Отправляем напоминание с обработкой 403
+            try:
+                await self.bot.send_message(user_id, message_text)
+                print(f"✅ Ежедневное напоминание отправлено пользователю {user_id}")
+            except TelegramForbiddenError:
+                print(f"🚫 Пользователь {user_id} заблокировал бота - удаляем из рассылки")
+                # Можно добавить логику деактивации пользователя
+            except TelegramBadRequest as e:
+                print(f"❌ Неверный запрос для пользователя {user_id}: {e}")
+            except Exception as e:
+                print(f"❌ Неизвестная ошибка для пользователя {user_id}: {e}")
 
         except Exception as e:
             print(f"❌ Ошибка отправки ежедневного напоминания пользователю {user_id}: {e}")
@@ -145,24 +153,35 @@ class ReminderScheduler:
         """Отправить напоминание конкретному пользователю"""
         try:
             from app.keyboards import tr, main_menu, safe_str
+            from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 
             if len(debts) == 1:
                 debt = debts[0]
                 text = await tr(user_id, 'single_reminder',
-                              person=safe_str(debt['person']),
-                              amount=safe_str(debt['amount']),
-                              currency=safe_str(debt.get('currency', 'UZS')),
-                              due=safe_str(debt['due']))
+                                person=safe_str(debt['person']),
+                                amount=safe_str(debt['amount']),
+                                currency=safe_str(debt.get('currency', 'UZS')),
+                                due=safe_str(debt['due']))
             else:
                 text = await tr(user_id, 'multiple_reminders', count=len(debts))
                 for debt in debts:
                     text += f"\n• {safe_str(debt['person'])}: {safe_str(debt['amount'])} {safe_str(debt.get('currency', 'UZS'))}"
 
-            kb = await main_menu(user_id)
-            await self.bot.send_message(user_id, text, reply_markup=kb)
+            try:
+                kb = await main_menu(user_id)
+                await self.bot.send_message(user_id, text, reply_markup=kb)
+            except TelegramForbiddenError:
+                print(f"🚫 Пользователь {user_id} заблокировал бота")
+                # Можно добавить деактивацию пользователя в БД
+            except TelegramBadRequest as e:
+                print(f"❌ Неверный запрос для пользователя {user_id}: {e}")
+            except Exception as e:
+                print(f"❌ Неизвестная ошибка отправки пользователю {user_id}: {e}")
 
         except Exception as e:
             print(f"❌ Ошибка отправки напоминания пользователю {user_id}: {e}")
+
+
 
     async def schedule_all_reminders(self):
         """

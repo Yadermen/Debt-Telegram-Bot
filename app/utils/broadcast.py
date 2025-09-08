@@ -11,9 +11,11 @@ from ..database import (
 )
 
 
-async def send_broadcast_to_all_users(text: str, photo_id: str = None, admin_id: int = None) -> Tuple[int, int, List[int]]:
+async def send_broadcast_to_all_users(text: str, photo_id: str = None, admin_id: int = None) -> Tuple[
+    int, int, List[int]]:
     """Отправить рассылку всем пользователям"""
     from app.bot import bot
+    from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 
     users = await get_all_users()
     success_count = 0
@@ -39,16 +41,27 @@ async def send_broadcast_to_all_users(text: str, photo_id: str = None, admin_id:
             # Отправляем прогресс каждые 10 пользователей
             if admin_id and i % 10 == 0:
                 try:
-                    progress = f"📤 Прогресс: {i}/{len(users)} ({round(i/len(users)*100, 1)}%)"
+                    progress = f"📤 Прогресс: {i}/{len(users)} ({round(i / len(users) * 100, 1)}%)"
                     await bot.send_message(admin_id, progress)
                 except Exception:
                     pass
 
             await asyncio.sleep(0.1)  # Небольшая задержка между отправками
+
+        except TelegramForbiddenError:
+            error_count += 1
+            blocked_users.append(user['user_id'])
+            print(f"🚫 Пользователь {user['user_id']} заблокировал бота")
+
+        except TelegramBadRequest as e:
+            error_count += 1
+            blocked_users.append(user['user_id'])
+            print(f"❌ Неверный запрос для пользователя {user['user_id']}: {e}")
+
         except Exception as e:
             error_count += 1
             blocked_users.append(user['user_id'])
-            # Не выводим ошибки в консоль, чтобы не засорять логи
+            print(f"❌ Неизвестная ошибка для пользователя {user['user_id']}: {e}")
 
     return success_count, error_count, blocked_users
 

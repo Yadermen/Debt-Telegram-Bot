@@ -13,6 +13,10 @@ from .handlers import register_all_handlers
 from .database import init_db
 from .utils.scheduler import scheduler, schedule_all_reminders
 from .utils.broadcast import process_scheduled_messages
+from .config import (
+    ADMIN_HOST, ADMIN_PORT, ADMIN_USERNAME, ADMIN_PASSWORD,
+    ADMIN_AUTO_START, ADMIN_ALLOWED_IPS
+)
 
 # Импорт админки
 try:
@@ -103,29 +107,31 @@ async def on_startup():
         print(f"❌ Ошибка добавления задачи: {e}")
 
     # Запуск админки в фоновом режиме
-    if ADMIN_AVAILABLE:
+    if ADMIN_AVAILABLE and ADMIN_AUTO_START:
         try:
             admin_thread = start_admin_in_background()
-            print("✅ Админка запущена в фоновом режиме")
+            if admin_thread:
+                print("✅ Админка запущена в фоновом режиме")
 
-            # Информация о доступе к админке
-            admin_host = os.getenv('ADMIN_HOST', '0.0.0.0')
-            admin_port = os.getenv('ADMIN_PORT', '8080')
-            admin_username = os.getenv('ADMIN_USERNAME', 'admin')
-            admin_password = os.getenv('ADMIN_PASSWORD', 'admin123')
-
-            print("=" * 50)
-            print("🔧 ИНФОРМАЦИЯ О АДМИНКЕ")
-            print("=" * 50)
-            print(f"🌐 URL: http://{admin_host}:{admin_port}/admin")
-            print(f"👤 Логин: {admin_username}")
-            print(f"🔑 Пароль: {admin_password}")
-            print("=" * 50)
+                print("=" * 50)
+                print("🔧 ИНФОРМАЦИЯ О АДМИНКЕ")
+                print("=" * 50)
+                print(f"🌐 URL: http://{ADMIN_HOST}:{ADMIN_PORT}/admin")
+                print(f"👤 Логин: {ADMIN_USERNAME}")
+                print(f"🔑 Пароль: {ADMIN_PASSWORD}")
+                if ADMIN_ALLOWED_IPS:
+                    print(f"🛡️ Разрешенные IP: {', '.join(ADMIN_ALLOWED_IPS)}")
+                print("=" * 50)
+            else:
+                print("⚠️ Админка не запущена (автозапуск отключен)")
 
         except Exception as e:
             print(f"❌ Ошибка запуска админки: {e}")
     else:
-        print("⚠️ Админка не запущена (модуль недоступен)")
+        if not ADMIN_AVAILABLE:
+            print("⚠️ Админка не запущена (модуль недоступен)")
+        elif not ADMIN_AUTO_START:
+            print("⚠️ Админка не запущена (автозапуск отключен в config.py)")
 
     print("🎉 Бот успешно запущен!")
 
