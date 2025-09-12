@@ -55,7 +55,7 @@ async def send_broadcast_to_all_users(text: str, photo_id: str = None, admin_id:
 
 async def send_scheduled_message(message_data: dict) -> bool:
     """Отправить запланированное сообщение"""
-    from bot import bot
+    from app.bot import bot
 
     try:
         if message_data['photo_id']:
@@ -70,7 +70,7 @@ async def send_scheduled_message(message_data: dict) -> bool:
 
 async def schedule_message_for_user(user_id: int, text: str, photo_id: str = None, schedule_datetime: str = None) -> bool:
     """Запланировать сообщение для конкретного пользователя"""
-    from utils.scheduler import scheduler
+    from app.utils.scheduler import scheduler
 
     if schedule_datetime:
         await save_scheduled_message(user_id, text, photo_id, schedule_datetime)
@@ -90,7 +90,7 @@ async def schedule_message_for_user(user_id: int, text: str, photo_id: str = Non
 
 async def send_scheduled_broadcast_with_stats(text: str, photo_id: str = None, admin_id: int = None) -> Tuple[int, int, List[int]]:
     """Отправить запланированную рассылку с отправкой статистики админу"""
-    from bot import bot
+    from app.bot import bot
 
     success, errors, blocked_users = await send_broadcast_to_all_users(text, photo_id, admin_id)
 

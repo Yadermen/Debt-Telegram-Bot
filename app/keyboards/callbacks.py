@@ -58,6 +58,7 @@ class CallbackData:
 
     # === REMINDERS ===
     REMINDER_CHANGE = 'reminder_change'
+    EXPORT_EXCEL = "export_excel"
 
 
 class DynamicCallbacks:

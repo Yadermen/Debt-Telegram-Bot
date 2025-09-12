@@ -31,6 +31,10 @@ async def main_menu(user_id: int) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
+                text=await tr(user_id, 'export_excel_btn'),
+                callback_data=CallbackData.EXPORT_EXCEL
+            ),
+            InlineKeyboardButton(
                 text=await tr(user_id, 'how_to_use_btn'),
                 callback_data=CallbackData.HOW_TO_USE
             )

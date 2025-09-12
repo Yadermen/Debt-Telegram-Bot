@@ -57,7 +57,11 @@ def validate_person_name(name: str) -> bool:
 
 @router.callback_query(F.data == 'back_main')
 async def back_main(call: CallbackQuery, state: FSMContext):
+    await call.answer(text="fff")
     """Возврат в главное меню"""
+    # 1. Сразу убираем "часики"
+    await call.answer()
+
     try:
         await state.clear()
         text = await tr(call.from_user.id, 'choose_action')
@@ -66,9 +70,13 @@ async def back_main(call: CallbackQuery, state: FSMContext):
     except Exception as e:
         print(f"❌ Ошибка в back_main: {e}")
         try:
-            await call.answer("❌ Ошибка перехода в меню")
+            await call.answer("❌ Ошибка перехода в меню", show_alert=True)
         except:
             pass
+
+
+
+
 
 
 # === ПРОСМОТР ДОЛГОВ ===
