@@ -1,6 +1,3 @@
-"""
-Админ панель для управления ботом - исправленная версия
-"""
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
@@ -15,7 +12,7 @@ from app.database import (
     save_scheduled_message
 )
 from app.states import AdminBroadcast
-from app.utils.scheduler import scheduler
+from app.utils.broadcast import send_broadcast_to_all_users, send_scheduled_broadcast_with_stats
 
 router = Router()
 
@@ -148,6 +145,7 @@ async def admin_broadcast_text(message: Message, state: FSMContext):
     await state.update_data(broadcast_text=message.text)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📷 Добавить картинку", callback_data="add_broadcast_photo")],
         [InlineKeyboardButton(text="📤 Отправить сейчас", callback_data="send_broadcast_now")],
         [InlineKeyboardButton(text="⏰ Запланировать", callback_data="schedule_broadcast")],
         [InlineKeyboardButton(text="❌ Отменить", callback_data="admin_back")]
@@ -160,6 +158,92 @@ async def admin_broadcast_text(message: Message, state: FSMContext):
     )
 
 
+@router.callback_query(F.data == "add_broadcast_photo")
+async def admin_broadcast_add_photo(call: CallbackQuery, state: FSMContext):
+    """Добавить картинку к рассылке"""
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа")
+        return
+
+    await state.set_state(AdminBroadcast.waiting_for_photo)
+    await call.message.edit_text(
+        "📷 Добавление картинки\n\n"
+        "Отправьте картинку для рассылки:"
+    )
+
+
+@router.message(AdminBroadcast.waiting_for_photo, F.photo)
+async def admin_broadcast_photo(message: Message, state: FSMContext):
+    """Получить картинку для рассылки"""
+    if not is_admin(message.from_user.id):
+        return
+
+    photo_id = message.photo[-1].file_id  # Берем фото лучшего качества
+    await state.update_data(broadcast_photo=photo_id)
+
+    data = await state.get_data()
+    text = data.get('broadcast_text', '')
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📤 Отправить сейчас", callback_data="send_broadcast_now")],
+        [InlineKeyboardButton(text="⏰ Запланировать", callback_data="schedule_broadcast")],
+        [InlineKeyboardButton(text="🔄 Изменить картинку", callback_data="add_broadcast_photo")],
+        [InlineKeyboardButton(text="🗑 Убрать картинку", callback_data="remove_broadcast_photo")],
+        [InlineKeyboardButton(text="❌ Отменить", callback_data="admin_back")]
+    ])
+
+    try:
+        await message.answer_photo(
+            photo_id,
+            caption=f"📢 Рассылка с картинкой:\n\n{text}\n\n✅ Картинка добавлена! Выберите действие:",
+            reply_markup=kb
+        )
+    except Exception as e:
+        print(f"❌ Ошибка отправки превью: {e}")
+        await message.answer(
+            f"📢 Рассылка с картинкой:\n\n{text}\n\n✅ Картинка добавлена! Выберите действие:",
+            reply_markup=kb
+        )
+
+
+@router.message(AdminBroadcast.waiting_for_photo)
+async def admin_broadcast_photo_invalid(message: Message, state: FSMContext):
+    """Неправильный тип файла для картинки"""
+    if not is_admin(message.from_user.id):
+        return
+
+    await message.answer(
+        "❌ Отправьте картинку (фото)!\n\n"
+        "Поддерживаются только изображения."
+    )
+
+
+@router.callback_query(F.data == "remove_broadcast_photo")
+async def admin_broadcast_remove_photo(call: CallbackQuery, state: FSMContext):
+    """Убрать картинку из рассылки"""
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа")
+        return
+
+    await state.update_data(broadcast_photo=None)
+    data = await state.get_data()
+    text = data.get('broadcast_text', '')
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📷 Добавить картинку", callback_data="add_broadcast_photo")],
+        [InlineKeyboardButton(text="📤 Отправить сейчас", callback_data="send_broadcast_now")],
+        [InlineKeyboardButton(text="⏰ Запланировать", callback_data="schedule_broadcast")],
+        [InlineKeyboardButton(text="❌ Отменить", callback_data="admin_back")]
+    ])
+
+    await call.message.edit_text(
+        f"📢 Текст рассылки:\n\n{text}\n\n🗑 Картинка удалена. Выберите действие:",
+        reply_markup=kb
+    )
+
+
+from aiogram.exceptions import TelegramBadRequest
+
 @router.callback_query(F.data == "send_broadcast_now")
 async def admin_broadcast_send_now(call: CallbackQuery, state: FSMContext):
     """Отправить рассылку сейчас"""
@@ -169,30 +253,66 @@ async def admin_broadcast_send_now(call: CallbackQuery, state: FSMContext):
 
     data = await state.get_data()
     text = data['broadcast_text']
+    photo_id = data.get('broadcast_photo')
     admin_id = call.from_user.id
 
-    await call.message.edit_text("📤 Отправка рассылки...")
+    broadcast_type = "с картинкой" if photo_id else "только текст"
+
+    # Безопасная попытка редактирования
+    try:
+        if call.message.text:
+            await call.message.edit_text(f"📤 Отправка рассылки ({broadcast_type})...")
+        elif call.message.caption:
+            await call.message.edit_caption(f"📤 Отправка рассылки ({broadcast_type})...")
+        else:
+            await call.message.answer(f"📤 Отправка рассылки ({broadcast_type})...")
+    except TelegramBadRequest:
+        await call.message.answer(f"📤 Отправка рассылки ({broadcast_type})...")
 
     try:
-        success, errors, blocked_users = await scheduler.send_broadcast_to_all_users(text, None, admin_id)
+        success, errors, blocked_users = await send_broadcast_to_all_users(text, photo_id, admin_id)
 
-        result_text = f"✅ Рассылка завершена!\n\n📊 Результаты:\n✅ Успешно отправлено: {success}\n❌ Ошибок: {errors}"
+        result_text = f"""✅ Рассылка завершена!
+
+📊 Результаты:
+✅ Успешно отправлено: {success}
+❌ Ошибок: {errors}
+📈 Процент доставки: {round((success/(success+errors))*100, 1) if (success+errors) > 0 else 0}%
+
+📝 Тип рассылки: {broadcast_type}"""
 
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад в админ панель", callback_data="admin_back")]
         ])
 
-        await call.message.edit_text(result_text, reply_markup=kb)
+        # Аналогично — проверяем, что редактируем
+        try:
+            if call.message.text:
+                await call.message.edit_text(result_text, reply_markup=kb)
+            elif call.message.caption:
+                await call.message.edit_caption(result_text, reply_markup=kb)
+            else:
+                await call.message.answer(result_text, reply_markup=kb)
+        except TelegramBadRequest:
+            await call.message.answer(result_text, reply_markup=kb)
+
         await state.clear()
 
     except Exception as e:
         print(f"❌ Ошибка отправки рассылки: {e}")
-        await call.message.edit_text(
-            "❌ Ошибка при отправке рассылки",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")]
-            ])
-        )
+        error_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")]
+        ])
+        try:
+            if call.message.text:
+                await call.message.edit_text("❌ Ошибка при отправке рассылки", reply_markup=error_kb)
+            elif call.message.caption:
+                await call.message.edit_caption("❌ Ошибка при отправке рассылки", reply_markup=error_kb)
+            else:
+                await call.message.answer("❌ Ошибка при отправке рассылки", reply_markup=error_kb)
+        except TelegramBadRequest:
+            await call.message.answer("❌ Ошибка при отправке рассылки", reply_markup=error_kb)
+
         await state.clear()
 
 
@@ -205,12 +325,20 @@ async def admin_broadcast_schedule(call: CallbackQuery, state: FSMContext):
 
     await state.set_state(AdminBroadcast.waiting_for_schedule_time)
 
-    await call.message.edit_text(
-        "⏰ Планирование рассылки\n\n"
-        "Введите дату и время отправки в формате:\n"
-        "YYYY-MM-DD HH:MM\n\n"
-        "Например: 2024-01-15 14:30"
-    )
+    try:
+        await call.message.edit_text(
+            "⏰ Планирование рассылки\n\n"
+            "Введите дату и время отправки в формате:\n"
+            "YYYY-MM-DD HH:MM\n\n"
+            "Например: 2024-01-15 14:30"
+        )
+    except:
+        await call.message.answer(
+            "⏰ Планирование рассылки\n\n"
+            "Введите дату и время отправки в формате:\n"
+            "YYYY-MM-DD HH:MM\n\n"
+            "Например: 2024-01-15 14:30"
+        )
 
 
 @router.message(AdminBroadcast.waiting_for_schedule_time)
@@ -230,6 +358,7 @@ async def admin_broadcast_schedule_time(message: Message, state: FSMContext):
 
     data = await state.get_data()
     text = data['broadcast_text']
+    photo_id = data.get('broadcast_photo')
 
     try:
         # Безопасно получаем список пользователей
@@ -247,7 +376,7 @@ async def admin_broadcast_schedule_time(message: Message, state: FSMContext):
                 await save_scheduled_message(
                     user['user_id'],
                     text,
-                    None,
+                    photo_id,
                     schedule_time.strftime('%Y-%m-%d %H:%M')
                 )
                 saved_count += 1
@@ -255,20 +384,27 @@ async def admin_broadcast_schedule_time(message: Message, state: FSMContext):
                 print(f"❌ Ошибка сохранения для пользователя {user['user_id']}: {e}")
 
         # Добавляем задачу в планировщик
+        from app.utils.scheduler import scheduler
         job_id = f"broadcast_{datetime.now().timestamp()}"
         scheduler.scheduler.add_job(
-            scheduler.send_scheduled_broadcast_with_stats,
+            send_scheduled_broadcast_with_stats,
             'date',
             run_date=schedule_time,
             id=job_id,
-            args=[text, None, message.from_user.id]
+            args=[text, photo_id, message.from_user.id]
         )
 
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад в админ панель", callback_data="admin_back")]
         ])
 
-        confirm_text = f"✅ Рассылка запланирована на {schedule_time.strftime('%d.%m.%Y %H:%M')}\nПолучателей: {saved_count}"
+        broadcast_type = "с картинкой" if photo_id else "только текст"
+        confirm_text = f"""✅ Рассылка запланирована на {schedule_time.strftime('%d.%m.%Y %H:%M')}
+
+📊 Детали:
+👥 Получателей: {saved_count}
+📝 Тип: {broadcast_type}"""
+
         await message.answer(confirm_text, reply_markup=kb)
         await state.clear()
 
