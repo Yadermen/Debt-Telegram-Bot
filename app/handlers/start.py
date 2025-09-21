@@ -1,15 +1,17 @@
 """
 Обработчики команды /start и выбора языка
 """
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from ..database import get_user_data, get_user_by_id, save_user_lang, get_or_create_user
-from ..keyboards import tr, LANGS, main_menu, CallbackData
+from ..keyboards import tr, LANGS, main_menu, CallbackData, settings_menu, my_debts_menu
 from ..utils import safe_edit_message
 from ..states import AddDebt, EditDebt, SetNotifyTime, AdminBroadcast
+from .debt import show_debts_simple
+
 
 router = Router()
 
@@ -273,3 +275,35 @@ async def back_to_main(call: CallbackQuery, state: FSMContext):
     except Exception as e:
         print(f"❌ Ошибка в back_to_main: {e}")
         await call.answer("❌ Ошибка возврата в меню")
+
+@router.callback_query(F.data == CallbackData.SETTINGS)
+async def settings_menu_handler(call: CallbackQuery, state: FSMContext):
+    """Меню настроек"""
+    user_id = call.from_user.id
+    try:
+        await state.clear()
+        text = await tr(user_id, 'choose_action')
+        kb = await settings_menu(user_id)
+        await safe_edit_message(call, text, kb)
+    except Exception as e:
+        print(f"❌ Ошибка в settings_menu_handler: {e}")
+        await call.answer("❌ Ошибка настроек")
+
+@router.callback_query(F.data == CallbackData.MY_DEBTS)
+async def my_debts_menu_handler(call: CallbackQuery, state: FSMContext):
+    """Подменю 'Мои долги'"""
+    user_id = call.from_user.id
+    try:
+        await state.clear()
+        text = await tr(user_id, 'your_debts')
+        kb = await my_debts_menu(user_id)
+        await safe_edit_message(call, text, kb)
+    except Exception as e:
+        print(f"❌ Ошибка в my_debts_menu_handler: {e}")
+        await call.answer("❌ Ошибка меню долгов")
+
+@router.callback_query(F.data == CallbackData.DEBTS_LIST)
+async def debts_list_handler(call: CallbackQuery, state: FSMContext):
+    """Перенаправление к списку долгов"""
+    # Перенаправляем к существующему обработчику show_debts_simple
+    await show_debts_simple(call, state)

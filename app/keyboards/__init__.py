@@ -10,7 +10,17 @@ from .keyboards import (
     currency_edit_keyboard,
     debt_actions_keyboard,
     confirm_keyboard,
-    edit_fields_keyboard
+    edit_fields_keyboard,
+    # Новые клавиатуры
+    my_debts_menu,
+    settings_menu,
+    reminders_menu,
+    debt_reminders_menu,
+    currency_reminders_menu,
+    reminder_repeat_menu,
+    my_reminders_menu,
+    reminder_actions_keyboard,
+    edit_reminder_menu
 )
 from .pagination import (
     debts_list_keyboard_paginated,
@@ -47,6 +57,17 @@ __all__ = [
     'debt_actions_keyboard',
     'confirm_keyboard',
     'edit_fields_keyboard',
+
+    # New keyboards for extended functionality
+    'my_debts_menu',
+    'settings_menu',
+    'reminders_menu',
+    'debt_reminders_menu',
+    'currency_reminders_menu',
+    'reminder_repeat_menu',
+    'my_reminders_menu',
+    'reminder_actions_keyboard',
+    'edit_reminder_menu',
 
     # Pagination keyboards
     'debts_list_keyboard_paginated',

@@ -2,10 +2,10 @@ import asyncio
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update, and_, func
+from sqlalchemy import update, and_, func, delete
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
-from .models import User, Debt, ScheduledMessage
+from .models import *
 from .connection import get_db
 
 
@@ -533,3 +533,168 @@ async def execute_query_safely(query_func, *args, **kwargs):
                 continue
             else:
                 raise e
+
+async def add_reminder(session: AsyncSession, user_id: int, text: str, due: datetime, repeat: str = "none"):
+    reminder = Reminder(
+        user_id=user_id,
+        text=text,
+        due=due,
+        repeat=repeat,
+        is_active=True,
+        created_at=datetime.utcnow()
+    )
+    session.add(reminder)
+    await session.commit()
+    await session.refresh(reminder)
+    return reminder
+
+
+
+# 🔍 Получить одно напоминание по id
+async def get_reminder(session: AsyncSession, reminder_id: int):
+    result = await session.execute(
+        select(Reminder).where(Reminder.id == reminder_id)
+    )
+    return result.scalar_one_or_none()
+
+
+# 🗑 Удалить напоминание
+async def delete_reminder(session: AsyncSession, reminder_id: int):
+    await session.execute(
+        delete(Reminder).where(Reminder.id == reminder_id)
+    )
+    await session.commit()
+
+
+# ✏️ Обновить напоминание
+async def update_reminder(session: AsyncSession, reminder_id: int, **kwargs):
+    await session.execute(
+        update(Reminder)
+        .where(Reminder.id == reminder_id)
+        .values(**kwargs)
+    )
+    await session.commit()
+
+
+# Включить напоминания (ставим дефолтное время)
+async def enable_debt_reminders(session, user_id: int, default_time: str = "09:00"):
+    user = await get_or_create_user(user_id, session)
+    user.notify_time = default_time
+    await session.commit()
+
+# Выключить напоминания (ставим None)
+async def disable_debt_reminders(session, user_id: int):
+    user = await get_or_create_user(user_id, session)
+    user.notify_time = None
+    await session.commit()
+
+# Установить конкретное время
+async def set_debt_reminder_time(session, user_id: int, time_str: str):
+    user = await get_or_create_user(user_id, session)
+    user.notify_time = time_str
+    await session.commit()
+
+from sqlalchemy.future import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, time, timedelta
+from .models import Reminder, User
+
+
+
+
+
+async def get_user_reminders(session: AsyncSession, user_id: int):
+    result = await session.execute(
+        select(Reminder).where(
+            Reminder.user_id == user_id,
+            Reminder.is_active == True,
+            getattr(Reminder, "system", False) == False  # если поля system нет, False == False
+        ).order_by(Reminder.id.desc())
+    )
+    return result.scalars().all()
+
+# Получить одно напоминание по id
+async def get_reminder_by_id(session: AsyncSession, reminder_id: int, user_id: int):
+    result = await session.execute(
+        select(Reminder).where(Reminder.id == reminder_id, Reminder.user_id == user_id)
+    )
+    return result.scalars().first()
+
+# Обновить текст напоминания
+async def update_reminder_text(session: AsyncSession, reminder_id: int, user_id: int, new_text: str):
+    r = await get_reminder_by_id(session, reminder_id, user_id)
+    if r:
+        r.text = new_text
+        await session.commit()
+        await session.refresh(r)
+    return r
+
+# Создать системное валютное напоминание (07:00 или 17:00)
+async def create_currency_reminder(session: AsyncSession, user_id: int, hour: int):
+    # Удалим предыдущие системные валютные напоминания
+    await delete_currency_reminders(session, user_id)
+
+    now = datetime.now()
+    first_due = datetime.combine(now.date(), time(hour=hour, minute=0))
+    if first_due <= now:
+        first_due += timedelta(days=1)
+
+    # Поле system=True — чтобы не показывать в списке
+    r = Reminder(
+        user_id=user_id,
+        text="Курс валют",
+        due=first_due,
+        repeat="daily",
+        is_active=True
+    )
+    # Если в модели есть колонка system — выставим
+    if hasattr(r, "system"):
+        setattr(r, "system", True)
+
+    session.add(r)
+    await session.commit()
+    await session.refresh(r)
+    return r
+
+# Отключить (удалить) системные валютные напоминания
+async def delete_currency_reminders(session: AsyncSession, user_id: int):
+    # Если в модели есть колонка system — фильтруем по ней
+    if hasattr(Reminder, "system"):
+        await session.execute(
+            delete(Reminder).where(
+                Reminder.user_id == user_id,
+                Reminder.is_active == True,
+                Reminder.repeat == "daily",
+                Reminder.text == "Курс валют",
+                Reminder.system == True
+            )
+        )
+    else:
+        # Фоллбек, если поля system нет: ориентируемся по тексту и repeat
+        await session.execute(
+            delete(Reminder).where(
+                Reminder.user_id == user_id,
+                Reminder.is_active == True,
+                Reminder.repeat == "daily",
+                Reminder.text == "Курс валют"
+            )
+        )
+    await session.commit()
+
+async def set_user_currency_time(session, user_id: int, value: str | None):
+    user = await session.get(User, user_id)
+    if not user:
+        print('Нет юзера')
+        return None
+    user.currency_notify_time = value
+    await session.commit()
+    await session.refresh(user)
+    print(vars(user))
+    return user
+
+async def get_user_currency_time(session, user_id: int) -> str | None:
+    user = await session.get(User, user_id)
+    if not user:
+        return None
+    return user.currency_notify_time
+

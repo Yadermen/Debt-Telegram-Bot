@@ -14,6 +14,7 @@ class User(Base):
     notify_time = Column(String, default='09:00')
     is_active = Column(Boolean, default=True)  # Для soft delete
     created_at = Column(DateTime, default=datetime.utcnow)
+    currency_notify_time = Column(String, nullable=True, default=None)
 
     # Relationships
     debts = relationship("Debt", back_populates="user")
@@ -54,6 +55,20 @@ class ScheduledMessage(Base):
 
     # Relationships
     user = relationship("User", back_populates="scheduled_messages")
+
+class Reminder(Base):
+    __tablename__ = 'reminders'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey('users.user_id'), nullable=False)
+
+    text = Column(Text, nullable=False)              # текст напоминания
+    due = Column(DateTime, nullable=False)           # когда напомнить
+    repeat = Column(String, default='none')          # none, daily, monthly
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    system = Column(Boolean, default=False)
+
 
 
 def safe_str(value):

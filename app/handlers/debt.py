@@ -17,7 +17,7 @@ try:
         skip_comment_keyboard, menu_button, debt_actions_keyboard,
         confirm_keyboard, edit_fields_keyboard, currency_edit_keyboard,
         CallbackData, DynamicCallbacks, debts_list_keyboard_paginated,
-        debts_list_keyboard, safe_str
+        debts_list_keyboard, safe_str, my_debts_menu
     )
     from ..states import AddDebt, EditDebt
     from ..utils import safe_edit_message
@@ -91,7 +91,8 @@ async def show_debts_simple(call: CallbackQuery, state: FSMContext):
 
         if not debts:
             text = await tr(user_id, 'no_debts')
-            markup = await main_menu(user_id)
+            # Возвращаем в подменю "Мои долги" вместо главного меню
+            markup = await my_debts_menu(user_id)
             await safe_edit_message(call, text, markup)
             return
 

@@ -30,4 +30,16 @@ class SetNotifyTime(StatesGroup):
     waiting_for_time = State()
 
 
-__all__ = ['AddDebt', 'EditDebt', 'AdminBroadcast', 'SetNotifyTime']
+class AddReminder(StatesGroup):
+    """Состояния для добавления пользовательского напоминания"""
+    text = State()
+    datetime = State()
+    repeat = State()
+
+
+class EditReminder(StatesGroup):
+    """Состояния для редактирования напоминания"""
+    edit_value = State()
+
+
+__all__ = ['AddDebt', 'EditDebt', 'AdminBroadcast', 'SetNotifyTime', 'AddReminder', 'EditReminder']
