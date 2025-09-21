@@ -32,7 +32,8 @@ dp = Dispatcher(storage=MemoryStorage())
 scheduler.set_bot(bot)
 
 @dp.errors()
-async def error_handler(event, exception):
+async def error_handler(update, exception):
+    print(f"[error_handler] update={update}, exception={exception}")
     print(f"❌ Ошибка в обработчике: {type(exception).__name__}: {exception}")
     if "IllegalStateChangeError" in str(exception):
         print("⚠️ Ошибка состояния SQLAlchemy - игнорируем")

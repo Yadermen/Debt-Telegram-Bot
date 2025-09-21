@@ -18,10 +18,11 @@ class EditDebt(StatesGroup):
 
 
 class AdminBroadcast(StatesGroup):
-    """Состояния для админ панели - рассылка"""
     waiting_for_text = State()
     waiting_for_photo = State()
     waiting_for_schedule_time = State()
+    waiting_for_button_text = State()
+    waiting_for_button_url = State()
 
 
 class SetNotifyTime(StatesGroup):
