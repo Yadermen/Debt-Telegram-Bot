@@ -4,6 +4,13 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, timedelta
 import asyncio
+from app.database.models import Reminder
+from app.database.crud import (
+    get_due_reminders,
+    get_due_repeating_reminders,
+    update_reminder_due,
+    delete_reminder
+)
 
 
 class ReminderScheduler:
@@ -174,15 +181,15 @@ class ReminderScheduler:
 
             # Очищаем все существующие задачи пользовательских напоминаний
             for job in self.scheduler.get_jobs():
-                if job.id.startswith('user_reminder_'):
+                if job.id.startswith(('user_reminder_', 'user_currency_', 'general_reminders_', 'repeating_reminders')):
                     job.remove()
 
             print("🔄 Перепланирование всех пользовательских напоминаний...")
 
             # Получаем всех пользователей
             users = await get_all_users()
-
             scheduled_count = 0
+
             for user in users:
                 user_id = user['user_id']
                 notify_time = user.get('notify_time')
@@ -191,10 +198,9 @@ class ReminderScheduler:
                     continue
 
                 try:
-                    # Парсим время уведомлений
                     hour, minute = map(int, notify_time.split(':'))
 
-                    # Создаем задачу для пользователя
+                    # Ежедневные напоминания о долгах
                     self.scheduler.add_job(
                         self.send_daily_reminders,
                         'cron',
@@ -205,13 +211,48 @@ class ReminderScheduler:
                         replace_existing=True
                     )
 
+                    # Валютные уведомления
+                    self.scheduler.add_job(
+                        self.send_currency_alerts,
+                        'cron',
+                        hour=hour,
+                        minute=minute,
+                        id=f'user_currency_{user_id}',
+                        args=[user_id],
+                        replace_existing=True
+                    )
+
+                    # Проверка пользовательских напоминаний (одноразовые)
+                    self.scheduler.add_job(
+                        self.send_general_reminders,
+                        'interval',
+                        minutes=1,
+                        id=f'general_reminders_{user_id}',
+                        replace_existing=True
+                    )
+
+                    # Проверка повторяющихся напоминаний
+                    self.scheduler.add_job(
+                        self.send_repeating_reminders,
+                        'interval',
+                        minutes=1,
+                        id=f'repeating_reminders_{user_id}',
+                        replace_existing=True
+                    )
+
                     scheduled_count += 1
 
                 except Exception as e:
                     print(f"❌ Ошибка планирования напоминаний для пользователя {user_id}: {e}")
 
-            # Также планируем общую проверку просроченных долгов каждый час
-
+            # Общая проверка просроченных долгов каждый час
+            self.scheduler.add_job(
+                self.send_due_reminders,
+                'cron',
+                hour='*',
+                id='due_reminders',
+                replace_existing=True
+            )
 
             print(f"✅ Перепланирование завершено. Запланировано {scheduled_count} пользовательских напоминаний")
 
@@ -232,7 +273,7 @@ class ReminderScheduler:
             blocked_users = []
 
             for user in users:
-                user_id = user['user_id']
+                user_id = user['text']
                 try:
                     if photo_id:
                         await self.bot.send_photo(user_id, photo_id, caption=text)
@@ -267,6 +308,99 @@ class ReminderScheduler:
     def add_job(self, *args, **kwargs):
         """Обёртка для add_job"""
         return self.scheduler.add_job(*args, **kwargs)
+
+    async def send_general_reminders(self):
+        """Проверка и отправка пользовательских напоминаний (не долги)"""
+        if not self.bot:
+            print("❌ Bot не установлен в scheduler")
+            return
+
+        try:
+            from app.database.crud import get_due_reminders  # нужно реализовать
+            from app.keyboards import tr
+
+            now = datetime.now().replace(second=0, microsecond=0)
+            reminders = await get_due_reminders(now)
+
+            if not reminders:
+                return
+
+            for r in reminders:
+                try:
+                    text = f"⏰ {r.text}\n🕒 {r.due}"
+                    await self.bot.send_message(r.user_id, text)
+                    # если одноразовое — удалить, если повторяющееся — пересчитать due
+                except Exception as e:
+                    print(f"❌ Ошибка отправки напоминания {r.id} пользователю {r.user_id}: {e}")
+
+        except Exception as e:
+            print(f"❌ Ошибка в send_general_reminders: {e}")
+
+    async def send_currency_alerts(self, user_id: int):
+        """Отправить валютное уведомление конкретному пользователю"""
+        if not self.bot:
+            return
+
+        try:
+            from app.database.crud import get_user_currency_settings
+            from app.keyboards import tr
+
+            settings = await get_user_currency_settings(user_id)
+            if not settings:
+                return
+
+            # допустим, settings = {"base": "USD", "quote": "UZS"}
+            import httpx
+            async with httpx.AsyncClient() as client:
+                url = f"https://api.exchangerate.host/latest?base={settings['base']}&symbols={settings['quote']}"
+                resp = await client.get(url)
+                rate = resp.json()["rates"][settings["quote"]]
+
+            text = f"💱 {settings['base']}/{settings['quote']} = {rate:.2f}"
+            await self.bot.send_message(user_id, text)
+
+        except Exception as e:
+            print(f"❌ Ошибка валютного уведомления для {user_id}: {e}")
+
+    async def send_repeating_reminders(self):
+        """Проверка и отправка повторяющихся напоминаний"""
+        if not self.bot:
+            return
+
+        try:
+            from app.database.crud import get_due_repeating_reminders, update_reminder_due
+            from app.keyboards import tr, safe_str
+            from datetime import datetime, timedelta
+            import calendar
+
+            now = datetime.now().replace(second=0, microsecond=0)
+            reminders = await get_due_repeating_reminders(now)
+
+            for r in reminders:
+                user_id = r.user_id
+                try:
+                    # мультиязычный текст
+                    text = await tr(user_id, "reminder_message", reminder=safe_str(r.text))
+                    await self.bot.send_message(user_id, f"⏰ {text}")
+
+                    # перенос даты
+                    if r.repeat == "daily":
+                        new_due = r.due + timedelta(days=1)
+                    elif r.repeat == "monthly":
+                        year = r.due.year + (r.due.month // 12)
+                        month = (r.due.month % 12) + 1
+                        day = min(r.due.day, calendar.monthrange(year, month)[1])
+                        new_due = r.due.replace(year=year, month=month, day=day)
+                    else:
+                        continue
+
+                    await update_reminder_due(r.id, new_due)
+
+                except Exception as e:
+                    print(f"❌ Ошибка повторного напоминания {r.id} пользователю {user_id}: {e}")
+
+        except Exception as e:
+            print(f"❌ Ошибка в send_repeating_reminders: {e}")
 
 
 # Создаем глобальный экземпляр планировщика

@@ -27,3 +27,6 @@ SYNC_DATABASE_URL = os.getenv("SYNC_DATABASE_URL") or (
 
 DB_PATH = 'app/debts.db'
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+DEESEEK_API_KEY = os.getenv("DEESEEK_API_KEY")
+DEESEEK_API_URL = os.getenv("DEESEEK_API_URL", "https://api.deepseek.com/v1/chat/completions")
+

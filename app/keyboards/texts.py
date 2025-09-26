@@ -17,6 +17,7 @@ LANGS = {
         'lang_ru': 'Русский',
         'lang_uz': 'Узбекский',
         'no_debts': 'У вас нет долгов.',
+        "cancel_btn": "❌ Отмена",
         'your_debts': 'Ваши долги:',
         'debt_saved': '✅ Долг записан!\n\nВыберите действие:',
         'debt_closed': '✅ Долг отмечен как возвращён!\n\nВыберите действие:',
@@ -126,6 +127,10 @@ LANGS = {
         "export_status_closed": "Закрыт",
         "export_status_active": "Активен",
         "export_sheet_name": "Долги",
+        "add_reminder_btn": "Добавить напоминание",
+        "menu.debts_off": "❌ Напоминания о долгах выключены",
+        "menu.currency_on": "✅ Курс валют ежедневно в {time}",
+        "menu.currency_off": "❌ Напоминания о курсе валют выключены",
 
         # Новые ключи для напоминаний
         'debts_list': 'Долги....',
@@ -169,6 +174,8 @@ LANGS = {
         "list_title": "📋 Ваши напоминания:",
         "del_usage": "Использование: /del_reminder <id>",
         "deleted": "🗑 Напоминание {id} удалено.",
+        "reminder_message": "Напоминание: {reminder}",
+        "currency_message": "{base}/{quote} = {rate:.2f}",
 
         # --- Repeat buttons ---
         "repeat_none": "Без повтора",
@@ -176,7 +183,6 @@ LANGS = {
         "repeat_monthly": "Ежемесячно",
         "debts_btn": "Долги",
         "currency_btn": "Курс валют",
-        "add_reminder_btn": "Добавить напоминание",
         "my_reminders_btn": "Мои напоминания",
         "back_btn": "Назад",
 
@@ -197,8 +203,15 @@ LANGS = {
         "disable_currency": "Выключить курс валют",
 
 
+
+
     },
     'uz':  {
+    "edit_reminder_text": "Eslatma matnini o‘zgartirish",
+    "reminder_deleted": "❌ Eslatma o‘chirildi!",
+    "reminder_updated": "✅ Eslatma yangilandi!",
+    "reminder_created": "✅ Eslatma yaratildi!\n\n📝 {text}\n🕒 {datetime}\n🔁 {repeat}",
+    "back_btn": "Orqaga",
     "welcome": "QarzNazoratBot-ga xush kelibsiz!\nAmalni tanlang:",
     "choose_action": "Amalni tanlang:",
     "add_debt": "➕ Qarzni qo'shish",
@@ -320,6 +333,23 @@ LANGS = {
     "repeat_none": "Takrorlanmasin",
     "repeat_daily": "Har kuni",
     "repeat_monthly": "Har oy",
+    "cancel_btn": "❌ Bekor qilish",
+    "add_reminder_btn": "Eslatma qo‘shish",
+    "reminder_status_active": "✅ Qarz eslatmasi soat {time} da",
+    "menu.debts_off": "❌ Qarz eslatmalari o‘chirilgan",
+    "menu.currency_on": "✅ Valyuta kursi har kuni soat {time} da",
+    "menu.currency_off": "❌ Valyuta kursi eslatmalari o‘chirilgan",
+        "enable_debt": "⏰ Eslatmalarni yoqish",
+        "disable_debt": "❌ Eslatmalarni o‘chirish",
+        "set_time": "Vaqtni sozlash",
+
+        # Oddiy eslatmalar
+        "reminder_message": "Eslatma: {reminder}",
+
+        # Valyuta
+        "currency_message": "{base}/{quote} = {rate:.2f}"
+
+
     }
 }
 

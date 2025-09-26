@@ -72,6 +72,17 @@ async def on_startup():
         print("✅ Задача проверки сообщений добавлена")
     except Exception as e:
         print(f"❌ Ошибка добавления задачи: {e}")
+    try:
+        scheduler.add_job(
+            scheduler.send_general_reminders,
+            "interval",
+            minutes=1,
+            id="general_reminders",
+            replace_existing=True
+        )
+        print("✅ Задача проверки пользовательских напоминаний добавлена")
+    except Exception as e:
+        print(f"❌ Ошибка добавления задачи: {e}")
 
     print("🎉 Бот успешно запущен!")
 
