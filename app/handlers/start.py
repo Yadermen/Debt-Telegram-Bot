@@ -289,21 +289,3 @@ async def settings_menu_handler(call: CallbackQuery, state: FSMContext):
         print(f"❌ Ошибка в settings_menu_handler: {e}")
         await call.answer("❌ Ошибка настроек")
 
-@router.callback_query(F.data == CallbackData.MY_DEBTS)
-async def my_debts_menu_handler(call: CallbackQuery, state: FSMContext):
-    """Подменю 'Мои долги'"""
-    user_id = call.from_user.id
-    try:
-        await state.clear()
-        text = await tr(user_id, 'your_debts')
-        kb = await my_debts_menu(user_id)
-        await safe_edit_message(call, text, kb)
-    except Exception as e:
-        print(f"❌ Ошибка в my_debts_menu_handler: {e}")
-        await call.answer("❌ Ошибка меню долгов")
-
-@router.callback_query(F.data == CallbackData.DEBTS_LIST)
-async def debts_list_handler(call: CallbackQuery, state: FSMContext):
-    """Перенаправление к списку долгов"""
-    # Перенаправляем к существующему обработчику show_debts_simple
-    await show_debts_simple(call, state)

@@ -83,34 +83,25 @@ async def back_main(call: CallbackQuery, state: FSMContext):
 
 # === ПРОСМОТР ДОЛГОВ ===
 
-@router.callback_query(F.data == 'my_debts')
+@router.callback_query(F.data == CallbackData.MY_DEBTS)
 async def show_debts_simple(call: CallbackQuery, state: FSMContext):
-    """Показать список долгов вместе с подменю 'Мои долги'"""
+    """Показать список долгов + подменю снизу"""
     user_id = call.from_user.id
     try:
         await state.clear()
         debts = await get_open_debts(user_id)
 
+        # убираем "часики"
+        await call.answer()
+
         if not debts:
             text = await tr(user_id, 'no_debts')
-        else:
-            # Заголовок
-            text = await tr(user_id, 'your_debts') + "\n\n"
+            markup = await my_debts_menu(user_id)
+            await safe_edit_message(call, text, markup)
+            return
 
-            # Формируем список долгов
-            for d in debts:
-                # пример: "Сане: 120 UZS до 2025-10-02 (занял сотку...)"
-                line = f"👤 {d.counterparty_name}: {d.amount} {d.currency or ''}"
-                if d.due_date:
-                    line += f" до {d.due_date}"
-                if d.description:
-                    line += f" ({d.description})"
-                text += line + "\n"
-
-        # Клавиатура подменю "Мои долги"
-        markup = await my_debts_menu(user_id)
-
-        # Безопасное редактирование
+        text = await tr(user_id, 'your_debts')
+        markup = await combined_debts_menu(debts, user_id, page=0)
         await safe_edit_message(call, text, markup)
 
     except Exception as e:
@@ -119,6 +110,23 @@ async def show_debts_simple(call: CallbackQuery, state: FSMContext):
             await call.answer("❌ Ошибка загрузки долгов")
         except:
             pass
+
+
+
+
+async def combined_debts_menu(debts, user_id: int, page: int = 0) -> InlineKeyboardMarkup:
+    debts_kb = await debts_list_keyboard_paginated(debts, user_id, page)
+    submenu_kb = await my_debts_menu(user_id)
+
+    inline_keyboard = []
+    # сначала список долгов + пагинация
+    if debts_kb and getattr(debts_kb, "inline_keyboard", None):
+        inline_keyboard.extend(debts_kb.inline_keyboard)
+    # затем кнопки подменю "Мои долги"
+    if submenu_kb and getattr(submenu_kb, "inline_keyboard", None):
+        inline_keyboard.extend(submenu_kb.inline_keyboard)
+    return InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+
 
 
 # === НАВИГАЦИЯ ПО СТРАНИЦАМ ===
@@ -142,8 +150,18 @@ async def debts_page_navigation(call: CallbackQuery, state: FSMContext):
 
         text = await tr(user_id, 'your_debts')
         markup = await debts_list_keyboard_paginated(debts, user_id, page=page)
-        await safe_edit_message(call, text, markup)
+        debts_kb = await debts_list_keyboard_paginated(debts, user_id, page=0)
 
+        # 2. подменю (экспорт, очистить, назад)
+        submenu_kb = await my_debts_menu(user_id)
+
+        # 3. объединяем
+        combined = InlineKeyboardMarkup(inline_keyboard=[
+            *debts_kb.inline_keyboard,
+            *submenu_kb.inline_keyboard
+        ])
+
+        await safe_edit_message(call, text, combined)
     except Exception as e:
         print(f"❌ Ошибка в debts_page_navigation: {e}")
         try:
@@ -219,10 +237,6 @@ async def debt_card(call: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(
                 text=await tr(user_id, 'to_list'),
                 callback_data=f'debts_page_{page}'
-            )],
-            [InlineKeyboardButton(
-                text=await tr(user_id, 'to_menu'),
-                callback_data='back_main'
             )],
         ])
 
