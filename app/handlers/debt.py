@@ -7,6 +7,8 @@ from aiogram.fsm.context import FSMContext
 from datetime import datetime, timedelta
 import re
 
+from ..keyboards.keyboards import add_debts_menu
+
 try:
     from ..database import (
         add_debt, get_open_debts, get_debt_by_id, update_debt,
@@ -83,7 +85,7 @@ async def back_main(call: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == 'my_debts')
 async def show_debts_simple(call: CallbackQuery, state: FSMContext):
-    """Показать список долгов"""
+    """Показать список долгов вместе с подменю 'Мои долги'"""
     user_id = call.from_user.id
     try:
         await state.clear()
@@ -91,13 +93,24 @@ async def show_debts_simple(call: CallbackQuery, state: FSMContext):
 
         if not debts:
             text = await tr(user_id, 'no_debts')
-            # Возвращаем в подменю "Мои долги" вместо главного меню
-            markup = await my_debts_menu(user_id)
-            await safe_edit_message(call, text, markup)
-            return
+        else:
+            # Заголовок
+            text = await tr(user_id, 'your_debts') + "\n\n"
 
-        text = await tr(user_id, 'your_debts')
-        markup = await debts_list_keyboard_paginated(debts, user_id, page=0)
+            # Формируем список долгов
+            for d in debts:
+                # пример: "Сане: 120 UZS до 2025-10-02 (занял сотку...)"
+                line = f"👤 {d.counterparty_name}: {d.amount} {d.currency or ''}"
+                if d.due_date:
+                    line += f" до {d.due_date}"
+                if d.description:
+                    line += f" ({d.description})"
+                text += line + "\n"
+
+        # Клавиатура подменю "Мои долги"
+        markup = await my_debts_menu(user_id)
+
+        # Безопасное редактирование
         await safe_edit_message(call, text, markup)
 
     except Exception as e:
@@ -224,6 +237,17 @@ async def debt_card(call: CallbackQuery, state: FSMContext):
 
 
 # === ДОБАВЛЕНИЕ ДОЛГА ===
+@router.callback_query(F.data == "add_debt_menu")
+async def add_debt_menu(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    text = await tr(user_id, "choose_action")
+    kb = await add_debts_menu(user_id)
+
+    # убираем "часики"
+    await call.answer()
+
+    # безопасное редактирование
+    await safe_edit_message(call, text, kb)
 
 @router.callback_query(F.data == 'add_debt')
 async def add_debt_start(call: CallbackQuery, state: FSMContext):

@@ -6,7 +6,7 @@ import aiohttp
 from typing import Dict, Optional
 from datetime import datetime, timedelta
 import json
-
+from app.keyboards import tr
 # Кэш для хранения курсов валют
 _currency_cache = {}
 _cache_expires = None
@@ -48,9 +48,9 @@ class CurrencyService:
                         rates = {
                             "USD": 1.0,  # базовая валюта
                             "EUR": data.get("rates", {}).get("EUR", 0.85),
-                            "UZS": data.get("rates", {}).get("UZS", 12450.0)
+                            "UZS": data.get("rates", {}).get("UZS", 12450.0),
+                            "RUB": data.get("rates", {}).get("RUB", 90.0)  # 👈 добавляем рубль
                         }
-
                         # Сохраняем в кэш
                         _currency_cache = rates
                         _cache_expires = datetime.now() + timedelta(seconds=CACHE_DURATION)
@@ -80,8 +80,10 @@ class CurrencyService:
         fallback_rates = {
             "USD": 1.0,
             "EUR": 0.85,
-            "UZS": 12450.0
+            "UZS": 12450.0,
+            "RUB": 90.0
         }
+
         print("⚠️ Используем резервные курсы валют")
 
         # Сохраняем в кэш резервные значения на короткое время
@@ -103,7 +105,7 @@ class CurrencyService:
                 return await tr_func(user_id, 'currency_error')
 
             # Форматируем красивое сообщение
-            message_parts = ["💱 Актуальные курсы валют:"]
+            message_parts = [f"{await tr(user_id, 'currency_rates')}:"]
 
             # USD всегда 1.0 (базовая валюта)
             message_parts.append(f"🇺🇸 USD: 1.00")
@@ -118,9 +120,14 @@ class CurrencyService:
                 uzs_rate = rates["UZS"]
                 message_parts.append(f"🇺🇿 UZS: {uzs_rate:.2f}")
 
+            # RUB к USD
+            if "RUB" in rates:
+                rub_rate = rates["RUB"]
+                message_parts.append(f"🇷🇺 RUB: {rub_rate:.2f}")
+
             # Добавляем время обновления
             current_time = datetime.now().strftime("%H:%M")
-            message_parts.append(f"\n🕐 Обновлено: {current_time}")
+            message_parts.append(f"\n{await tr(user_id, "updated")} {current_time}")
 
             return "\n".join(message_parts)
 
@@ -173,3 +180,16 @@ async def format_currency_notification(user_id: int, tr_func) -> str:
 async def convert_amount(amount: float, from_curr: str, to_curr: str) -> Optional[float]:
     """Конвертировать сумму между валютами (короткий алиас)"""
     return await CurrencyService.convert_currency(amount, from_curr, to_curr)
+
+
+async def convert_currency(direction: str, amount: float):
+    """
+    Конвертировать сумму по направлению вида 'uzs_usd', 'usd_eur' и т.д.
+    Совместимость со старыми вызовами.
+    """
+    try:
+        from_curr, to_curr = direction.split("_")
+        return await CurrencyService.convert_currency(amount, from_curr.upper(), to_curr.upper())
+    except Exception as e:
+        print(f"❌ Ошибка в convert_currency: {e}")
+        return None

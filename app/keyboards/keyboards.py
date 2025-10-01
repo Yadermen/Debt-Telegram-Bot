@@ -12,7 +12,7 @@ async def main_menu(user_id: int) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 text=await tr(user_id, 'add_debt'),
-                callback_data=CallbackData.ADD_DEBT
+                callback_data=CallbackData.ADD_DEBT_MENU
             ),
             InlineKeyboardButton(
                 text=await tr(user_id, 'my_debts'),
@@ -49,16 +49,30 @@ async def main_menu(user_id: int) -> InlineKeyboardMarkup:
         ]
     ])
 
+async def add_debts_menu(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+            text=await tr(user_id, 'add_debt'),
+            callback_data=CallbackData.ADD_DEBT
+        ),
+        ],
+        [
+
+            InlineKeyboardButton(
+                text=await tr(user_id, 'ai_debt_add'),
+                callback_data=CallbackData.AI_DEBT_ADD
+            )
+        ],
+
+    ])
+
+
 
 async def my_debts_menu(user_id: int) -> InlineKeyboardMarkup:
     """Подменю 'Мои долги'"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text=await tr(user_id, 'debts_list'),
-                callback_data=CallbackData.DEBTS_LIST
-            )
-        ],
+
         [
             InlineKeyboardButton(
                 text=await tr(user_id, 'export_excel_btn'),
@@ -95,12 +109,7 @@ async def settings_menu(user_id: int) -> InlineKeyboardMarkup:
                 callback_data=CallbackData.HOW_TO_USE
             )
         ],
-        [
-            InlineKeyboardButton(
-                text=await tr(user_id, 'ai_debt_add'),
-                callback_data=CallbackData.AI_DEBT_ADD
-            )
-        ],
+
         [
             InlineKeyboardButton(
                 text=await tr(user_id, 'back'),

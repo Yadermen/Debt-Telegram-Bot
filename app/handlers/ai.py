@@ -16,6 +16,7 @@ from app.keyboards import tr
 from app.keyboards.callbacks import CallbackData
 from app.keyboards.keyboards import main_menu
 import re
+from aiogram.fsm.state import State, StatesGroup
 
 router = Router()
 
@@ -25,6 +26,10 @@ DEESEEK_API_URL = config.DEESEEK_API_URL or "https://api.deepseek.com/v1/chat/co
 # -----------------------------
 # Pydantic schema для валидации JSON от ИИ
 # -----------------------------
+
+
+class DebtFSM(StatesGroup):
+    waiting_for_input = State()
 
 async def cancel_kb(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -185,12 +190,13 @@ def normalize_fields(parsed: dict) -> dict:
 # Callback handler
 # -----------------------------
 @router.callback_query(F.data == CallbackData.AI_DEBT_ADD)
-async def add_debt_ai_callback(call: CallbackQuery):
+async def add_debt_ai_callback(call: CallbackQuery, state: FSMContext):
     print("📲 Нажата кнопка AI_DEBT_ADD")
+    await state.set_state(DebtFSM.waiting_for_input)
     await call.answer()
-    await call.message.answer(await tr(call.from_user.id, 'ai_debt_input_hint'),
-        reply_markup= await cancel_kb(call.from_user.id)
-
+    await call.message.answer(
+        await tr(call.from_user.id, 'ai_debt_input_hint'),
+        reply_markup=await cancel_kb(call.from_user.id)
     )
 
 @router.callback_query(F.data == CallbackData.BACK)
@@ -210,8 +216,8 @@ async def back_to_main(call: CallbackQuery, state: FSMContext):
 # -----------------------------
 # Message handler
 # -----------------------------
-@router.message()
-async def ai_message_handler(m: Message):
+@router.message(DebtFSM.waiting_for_input)
+async def ai_message_handler(m: Message, state: FSMContext):
     print("💬 Получено сообщение:", m.text)
 
     parsed = await call_deepseek(m.text)
@@ -264,3 +270,4 @@ async def ai_message_handler(m: Message):
         )
     else:
         await m.answer(await tr(m.from_user.id, 'ai_debt_save_error'), reply_markup=await cancel_kb(m.from_user.id))
+    await state.clear()
