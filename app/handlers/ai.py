@@ -12,6 +12,7 @@ from dateutil.parser import isoparse
 from app import config
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from app.database import crud
+from app.keyboards import tr
 from app.keyboards.callbacks import CallbackData
 from app.keyboards.keyboards import main_menu
 import re
@@ -25,13 +26,31 @@ DEESEEK_API_URL = config.DEESEEK_API_URL or "https://api.deepseek.com/v1/chat/co
 # Pydantic schema для валидации JSON от ИИ
 # -----------------------------
 
-cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="❌ Отмена", callback_data=CallbackData.BACK)]
-])
+async def cancel_kb(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=await tr(user_id, 'cancel_btn'),
+                    callback_data=CallbackData.BACK
+                )
+            ]
+        ]
+    )
 
-exit_kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="⬅️ В меню", callback_data=CallbackData.BACK)]
-])
+
+async def exit_kb(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=await tr(user_id, 'to_menu'),
+                    callback_data=CallbackData.BACK
+                )
+            ]
+        ]
+    )
+
 class DebtAI(BaseModel):
     who_owes: str = Field(..., description="me | i")
     counterparty_name: str
@@ -169,14 +188,9 @@ def normalize_fields(parsed: dict) -> dict:
 async def add_debt_ai_callback(call: CallbackQuery):
     print("📲 Нажата кнопка AI_DEBT_ADD")
     await call.answer()
-    await call.message.answer(
-        "Введите данные свободным текстом:\n"
-        "- направление (‘я должен’ или ‘мне должны’)\n"
-        "- контрагент (имя/название)\n"
-        "- сумма и валюта (например: 250 USD)\n"
-        "- срок (YYYY-MM-DD)\n"
-        "- описание (необязательно)",
-        reply_markup=cancel_kb
+    await call.message.answer(await tr(call.from_user.id, 'ai_debt_input_hint'),
+        reply_markup= await cancel_kb(call.from_user.id)
+
     )
 
 @router.callback_query(F.data == CallbackData.BACK)
@@ -185,7 +199,7 @@ async def back_to_main(call: CallbackQuery, state: FSMContext):
     await call.answer()
     markup = await main_menu(call.from_user.id)   # ✅ передаём user_id
     await call.message.answer(
-        "🔙 Главное меню",
+        await tr(call.from_user.id, 'ai_main_menu'),
         reply_markup=markup
     )
 
@@ -203,7 +217,7 @@ async def ai_message_handler(m: Message):
     parsed = await call_deepseek(m.text)
     if not parsed:
         print("⚠️ Не удалось распознать данные")
-        await m.answer("Не удалось распознать данные. Попробуйте сформулировать проще.", reply_markup=cancel_kb)
+        await m.answer(await tr(m.from_user.id, 'ai_parse_failed'), reply_markup=await cancel_kb(m.from_user.id))
         return
 
     parsed = normalize_fields(parsed)
@@ -214,7 +228,7 @@ async def ai_message_handler(m: Message):
     except ValidationError as e:
         print("❌ Ошибка валидации:", e.errors())
         errors = [f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors()]
-        await m.answer(f"Не удалось распознать данные. Попробуйте написать проще: я должен Ивану 100 USD до YYYY-MM-DD ", reply_markup=cancel_kb )
+        await m.answer(await tr(m.from_user.id, 'ai_parse_failed_hint'), reply_markup=await cancel_kb(m.from_user.id) )
         return
 
     # --- Формируем JSON под твою модель Debt ---
@@ -235,14 +249,18 @@ async def ai_message_handler(m: Message):
     print("💾 Результат сохранения:", new_debt)
 
     if new_debt:
-        await m.answer(
-            "✅ Долг записан:\n"
-            f"- Контрагент: {new_debt['person']}\n"
-            f"- Сумма: {new_debt['amount']} {new_debt['currency']}\n"
-            f"- Срок: {new_debt['due']}\n"
-            f"- Направление: {'мне должны' if new_debt['direction']=='owed' else 'я должен'}\n"
-            f"- Комментарий: {new_debt['comment'] or '—'}",
-            reply_markup=exit_kb
+        await m.answer(await tr(
+                m.from_user.id,
+                'ai_debt_saved',
+                person=new_debt['person'],
+                amount=new_debt['amount'],
+                currency=new_debt['currency'],
+                due=new_debt['due'],
+                direction='мне должны' if new_debt['direction'] == 'owed' else 'я должен',
+                comment=new_debt['comment'] or '—'
+            )
+            ,
+            reply_markup=await exit_kb(m.from_user.id)
         )
     else:
-        await m.answer("❌ Ошибка при сохранении долга", reply_markup=cancel_kb)
+        await m.answer(await tr(m.from_user.id, 'ai_debt_save_error'), reply_markup=await cancel_kb(m.from_user.id))

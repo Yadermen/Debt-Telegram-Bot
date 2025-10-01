@@ -201,6 +201,29 @@ LANGS = {
         "enable_currency_morning": "Включить курс валют утром (7:00)",
         "enable_currency_evening": "Включить курс валют вечером (17:00)",
         "disable_currency": "Выключить курс валют",
+        'ai_debt_input_hint': (
+            "Введите данные свободным текстом:\n"
+            "- направление (‘я должен’ или ‘мне должны’)\n"
+            "- контрагент (имя/название)\n"
+            "- сумма и валюта (например: 250 USD)\n"
+            "- срок (YYYY-MM-DD)\n"
+            "- описание (необязательно)"
+        ),
+        'ai_main_menu': '🔙 Главное меню',
+        'ai_parse_failed': 'Не удалось распознать данные. Попробуйте сформулировать проще.',
+        'ai_parse_failed_hint': (
+            "Не удалось распознать данные. Попробуйте написать проще:\n"
+            "я должен Ивану 100 USD до YYYY-MM-DD"
+        ),
+        'ai_debt_saved': (
+            "✅ Долг записан:\n"
+            "- Контрагент: {person}\n"
+            "- Сумма: {amount} {currency}\n"
+            "- Срок: {due}\n"
+            "- Направление: {direction}\n"
+            "- Комментарий: {comment}"
+        ),
+        'ai_debt_save_error': '❌ Ошибка при сохранении долга',
 
 
 
@@ -209,12 +232,26 @@ LANGS = {
     'uz':  {
     "edit_reminder_text": "Eslatma matnini o‘zgartirish",
     "reminder_deleted": "❌ Eslatma o‘chirildi!",
+    'ai_debt_save_error': '❌ Qarzni saqlashda xatolik yuz berdi',
     "reminder_updated": "✅ Eslatma yangilandi!",
     "reminder_created": "✅ Eslatma yaratildi!\n\n📝 {text}\n🕒 {datetime}\n🔁 {repeat}",
     "back_btn": "Orqaga",
     "welcome": "QarzNazoratBot-ga xush kelibsiz!\nAmalni tanlang:",
     "choose_action": "Amalni tanlang:",
     "add_debt": "➕ Qarzni qo'shish",
+    'ai_debt_add': '🤖 Qarzni sunʼiy intellekt orqali qoʻshish',
+    'ai_debt_saved': (
+        "✅ Qarz saqlandi:\n"
+        "- Qarzdor: {person}\n"
+        "- Summasi: {amount} {currency}\n"
+        "- Muddat: {due}\n"
+        "- Yo‘nalish: {direction}\n"
+        "- Izoh: {comment}"
+    ),
+    'ai_parse_failed_hint': (
+        "Maʼlumotlarni aniqlab boʻlmadi. Iltimos, soddaroq yozing:\n"
+        "men Ivan ismli odamga YYYY-MM-DD sanasigacha 100 USD qarzdorman"
+    ),
     "my_debts": "📋 Qarzlarim",
     "clear_all": "🧹 Hammasini o'chirish",
     "reminders_menu": "🔔 Eslatmalar",
@@ -223,8 +260,10 @@ LANGS = {
     "settings": "⚙️ Sozlamalar",
     "help": "ℹ️ Yordam",
     "change_lang": "🌍 Tilni o'zgartirish",
+    'ai_parse_failed': 'Maʼlumotlarni aniqlab boʻlmadi. Iltimos, soddaroq shaklda yozib ko‘ring.',
     "choose_lang": "Tilni tanlang:",
     "lang_ru": "Rus tili",
+    'ai_main_menu': '🔙 Asosiy menyu',
     "lang_uz": "O'zbek tili",
     "no_debts": "Sizda qarzlar yo'q.",
     "your_debts": "Qarzlaringiz:",
@@ -347,7 +386,15 @@ LANGS = {
         "reminder_message": "Eslatma: {reminder}",
 
         # Valyuta
-        "currency_message": "{base}/{quote} = {rate:.2f}"
+        "currency_message": "{base}/{quote} = {rate:.2f}",
+        'ai_debt_input_hint': (
+            "Ma'lumotlarni erkin matn bilan kiriting:\n"
+            "- yo‘nalish (‘men qarzdorman’ yoki ‘menga qarzdor’)\n"
+            "- qarzdor (ism/yoki nom)\n"
+            "- summa va valyuta (masalan: 250 USD)\n"
+            "- muddat (YYYY-MM-DD)\n"
+            "- izoh (majburiy emas)"
+        ),
 
 
     }
