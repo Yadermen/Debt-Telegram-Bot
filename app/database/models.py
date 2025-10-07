@@ -69,6 +69,17 @@ class Reminder(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     system = Column(Boolean, default=False)
 
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'text': self.text,
+            'due': self.due,
+            'repeat': self.repeat,
+            'is_active': self.is_active,
+            'created_at': self.created_at
+        }
+
 
 
 def safe_str(value):

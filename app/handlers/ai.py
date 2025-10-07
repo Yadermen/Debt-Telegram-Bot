@@ -23,23 +23,21 @@ router = Router()
 DEESEEK_API_KEY = config.DEESEEK_API_KEY
 DEESEEK_API_URL = config.DEESEEK_API_URL or "https://api.deepseek.com/v1/chat/completions"
 
-# -----------------------------
-# Pydantic schema для валидации JSON от ИИ
-# -----------------------------
 
-
+# -----------------------------
+# FSM
+# -----------------------------
 class DebtFSM(StatesGroup):
     waiting_for_input = State()
+
 
 async def cancel_kb(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=await tr(user_id, 'cancel_btn'),
-                    callback_data=CallbackData.BACK
-                )
-            ]
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'cancel_btn'),
+                callback_data=CallbackData.BACK
+            )]
         ]
     )
 
@@ -47,15 +45,17 @@ async def cancel_kb(user_id: int) -> InlineKeyboardMarkup:
 async def exit_kb(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=await tr(user_id, 'to_menu'),
-                    callback_data=CallbackData.BACK
-                )
-            ]
+            [InlineKeyboardButton(
+                text=await tr(user_id, 'to_menu'),
+                callback_data=CallbackData.BACK
+            )]
         ]
     )
 
+
+# -----------------------------
+# Pydantic schema
+# -----------------------------
 class DebtAI(BaseModel):
     who_owes: str = Field(..., description="me | i")
     counterparty_name: str
@@ -96,11 +96,11 @@ class DebtAI(BaseModel):
             isoparse(v)
         except Exception:
             raise ValueError("due_date must be ISO YYYY-MM-DD")
-        return datetime.fromisoformat(v.replace("Z","")).date().isoformat()
+        return datetime.fromisoformat(v.replace("Z", "")).date().isoformat()
 
 
 # -----------------------------
-# Вызов DeepSeek
+# DeepSeek call
 # -----------------------------
 def extract_json(content: str) -> str:
     """Убираем ```json ... ``` обёртку, если модель её вернула"""
@@ -108,11 +108,14 @@ def extract_json(content: str) -> str:
     cleaned = re.sub(r"```$", "", cleaned.strip())
     return cleaned.strip()
 
-async def call_deepseek(user_text: str) -> dict | None:
+
+async def call_deepseek(user_text: str) -> list[dict] | None:
     today = datetime.now().date().isoformat()
 
     system_prompt = (
-        f"Ты помощник по финансовым записям. Возьми текст пользователя (на любом языке) и верни СТРОГО JSON с полями:\n"
+        f"Ты помощник по финансовым записям. Возьми текст пользователя (на любом языке) "
+        f"и верни СТРОГО JSON-МАССИВ (список) объектов, максимум 10 элементов. "
+        f"Каждый объект должен содержать:\n"
         "- who_owes: me или i\n"
         "- counterparty_name: строка\n"
         "- amount: число больше 0\n"
@@ -120,9 +123,9 @@ async def call_deepseek(user_text: str) -> dict | None:
         "- due_date: в формате YYYY-MM-DD\n"
         "- description: строка\n\n"
         f"Сегодняшняя дата: {today}. "
-        "Если пользователь пишет относительные даты (например: завтра, послезавтра, через неделю), "
-        "всегда конвертируй их в абсолютную дату в формате YYYY-MM-DD относительно сегодняшней даты.\n\n"
-        "Если данных недостаточно, ставь null, но всегда возвращай JSON. "
+        "Если пользователь пишет относительные даты (например: завтра, через неделю), "
+        "всегда конвертируй их в абсолютную дату.\n\n"
+        "Если данных недостаточно, ставь null, но всегда возвращай JSON-МАССИВ. "
         "Никаких комментариев, только JSON."
     )
 
@@ -156,8 +159,9 @@ async def call_deepseek(user_text: str) -> dict | None:
 
         try:
             cleaned = extract_json(content)
-            print("🧹 После очистки:", cleaned)
             parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                parsed = [parsed]
             print("✅ Успешно распарсили JSON:", parsed)
             return parsed
         except Exception as e:
@@ -171,9 +175,10 @@ async def call_deepseek(user_text: str) -> dict | None:
 def natural_to_date(text: str) -> str:
     try:
         isoparse(text)
-        return datetime.fromisoformat(text.replace("Z","")).date().isoformat()
+        return datetime.fromisoformat(text.replace("Z", "")).date().isoformat()
     except Exception:
         return (datetime.now(timezone.utc) + timedelta(days=14)).date().isoformat()
+
 
 def normalize_fields(parsed: dict) -> dict:
     print("🔧 Нормализация полей:", parsed)
@@ -187,7 +192,7 @@ def normalize_fields(parsed: dict) -> dict:
 
 
 # -----------------------------
-# Callback handler
+# Callback handlers
 # -----------------------------
 @router.callback_query(F.data == CallbackData.AI_DEBT_ADD)
 async def add_debt_ai_callback(call: CallbackQuery, state: FSMContext):
@@ -199,18 +204,16 @@ async def add_debt_ai_callback(call: CallbackQuery, state: FSMContext):
         reply_markup=await cancel_kb(call.from_user.id)
     )
 
+
 @router.callback_query(F.data == CallbackData.BACK)
 async def back_to_main(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await call.answer()
-    markup = await main_menu(call.from_user.id)   # ✅ передаём user_id
+    markup = await main_menu(call.from_user.id)
     await call.message.answer(
         await tr(call.from_user.id, 'ai_main_menu'),
         reply_markup=markup
     )
-
-
-
 
 
 # -----------------------------
@@ -220,54 +223,71 @@ async def back_to_main(call: CallbackQuery, state: FSMContext):
 async def ai_message_handler(m: Message, state: FSMContext):
     print("💬 Получено сообщение:", m.text)
 
-    parsed = await call_deepseek(m.text)
-    if not parsed:
-        print("⚠️ Не удалось распознать данные")
-        await m.answer(await tr(m.from_user.id, 'ai_parse_failed'), reply_markup=await cancel_kb(m.from_user.id))
-        return
-
-    parsed = normalize_fields(parsed)
-
-    try:
-        debt = DebtAI(**parsed)
-        print("✅ Валидация прошла:", debt)
-    except ValidationError as e:
-        print("❌ Ошибка валидации:", e.errors())
-        errors = [f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors()]
-        await m.answer(await tr(m.from_user.id, 'ai_parse_failed_hint'), reply_markup=await cancel_kb(m.from_user.id) )
-        return
-
-    # --- Формируем JSON под твою модель Debt ---
-    debt_json = {
-        "user_id": m.from_user.id,
-        "person": debt.counterparty_name,
-        "amount": int(debt.amount),
-        "currency": debt.currency,
-        "direction": "owed" if debt.who_owes == "me" else "owe",
-        "date": datetime.utcnow().date().isoformat(),
-        "due": debt.due_date,
-        "comment": debt.description or ""
-    }
-    print("📦 Готовый debt_json:", debt_json)
-
-    # --- Сохраняем через CRUD ---
-    new_debt = await crud.create_debt_from_ai(debt_json)
-    print("💾 Результат сохранения:", new_debt)
-
-    if new_debt:
-        await m.answer(await tr(
-                m.from_user.id,
-                'ai_debt_saved',
-                person=new_debt['person'],
-                amount=new_debt['amount'],
-                currency=new_debt['currency'],
-                due=new_debt['due'],
-                direction='мне должны' if new_debt['direction'] == 'owed' else 'я должен',
-                comment=new_debt['comment'] or '—'
-            )
-            ,
-            reply_markup=await exit_kb(m.from_user.id)
+    parsed_list = await call_deepseek(m.text)
+    if not parsed_list:
+        await m.answer(
+            await tr(m.from_user.id, 'ai_parse_failed'),
+            reply_markup=await cancel_kb(m.from_user.id)
         )
-    else:
-        await m.answer(await tr(m.from_user.id, 'ai_debt_save_error'), reply_markup=await cancel_kb(m.from_user.id))
+        return
+
+    all_debts_jsons = []
+    failed = []
+
+    for idx, parsed in enumerate(parsed_list[:10], start=1):
+        parsed = normalize_fields(parsed)
+        try:
+            debt = DebtAI(**parsed)
+        except ValidationError as e:
+            print(f"❌ Ошибка валидации {idx}:", e.errors())
+            failed.append((idx, e.errors()))
+            continue
+
+        debt_json = {
+            "user_id": m.from_user.id,
+            "person": debt.counterparty_name,
+            "amount": int(debt.amount),
+            "currency": debt.currency,
+            "direction": "owed" if debt.who_owes == "me" else "owe",
+            "date": datetime.utcnow().date().isoformat(),
+            "due": debt.due_date,
+            "comment": debt.description or ""
+        }
+        all_debts_jsons.append(debt_json)
+
+    # --- Сохраняем все долги одним вызовом ---
+    new_debts = await crud.create_debts_from_ai(all_debts_jsons)
+    print("💾 Результат сохранения:", new_debts)
+
+    # --- Выводим пользователю каждый долг отдельно ---
+    if new_debts:
+        total = len(new_debts)
+        for idx, d in enumerate(new_debts, start=1):
+            # если это последний долг — даём кнопку выхода
+            reply_markup = await exit_kb(m.from_user.id) if idx == total else None
+
+            await m.answer(
+                await tr(
+                    m.from_user.id,
+                    'ai_debt_saved',
+                    person=d['person'],
+                    amount=d['amount'],
+                    currency=d['currency'],
+                    due=d['due'],
+                    direction='мне должны' if d['direction'] == 'owed' else 'я должен',
+                    comment=d['comment'] or '—'
+                ),
+                reply_markup=reply_markup
+            )
+
+    if failed:
+        text = "⚠️ Не удалось сохранить некоторые долги:\n\n"
+        for i, err in failed:
+            details = "; ".join(
+                [f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in err]
+            )
+            text += f"{i}) Ошибка валидации: {details}\n"
+        await m.answer(text, reply_markup=await cancel_kb(m.from_user.id))
+
     await state.clear()
+

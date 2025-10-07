@@ -559,11 +559,27 @@ async def get_reminder(session: AsyncSession, reminder_id: int):
 
 
 # 🗑 Удалить напоминание
-async def delete_reminder(session: AsyncSession, reminder_id: int):
-    await session.execute(
-        delete(Reminder).where(Reminder.id == reminder_id)
-    )
-    await session.commit()
+async def delete_reminder(reminder_id: int):
+    """Удалить напоминание (soft delete)"""
+    async with get_db() as session:
+        try:
+            # Получаем напоминание
+            reminder = await session.get(Reminder, reminder_id)
+            if not reminder:
+                print(f"⚠️ Напоминание {reminder_id} не найдено")
+                return False
+
+            # Деактивируем
+            reminder.is_active = False
+            await session.commit()
+
+            print(f"✅ Напоминание {reminder_id} деактивировано")
+            return True
+
+        except Exception as e:
+            print(f"❌ Ошибка удаления напоминания {reminder_id}: {e}")
+            await session.rollback()
+            return False
 
 
 # ✏️ Обновить напоминание
@@ -700,18 +716,40 @@ async def get_user_currency_time(session, user_id: int) -> str | None:
 async def get_due_reminders(now):
     async with get_db() as session:
         result = await session.execute(
-            select(Reminder).where(Reminder.due <= now, Reminder.repeat == "none")
+            select(Reminder).where(
+                Reminder.due <= now,
+                Reminder.repeat == "none",
+                Reminder.is_active == True  # ← Добавьте эту проверку
+            )
         )
-        return [r.to_dict() for r in result.scalars().all()]
+        reminders = result.scalars().all()
+        return [{
+            'id': r.id,
+            'user_id': r.user_id,
+            'text': r.text,
+            'due': r.due,
+            'repeat': r.repeat,
+            'is_active': r.is_active
+        } for r in reminders]
 
-# выбрать повторяющиеся напоминания, срок которых <= now
 async def get_due_repeating_reminders(now):
     async with get_db() as session:
         result = await session.execute(
-            select(Reminder).where(Reminder.due <= now, Reminder.repeat != "none")
+            select(Reminder).where(
+                Reminder.due <= now,
+                Reminder.repeat != "none",
+                Reminder.is_active == True  # ← Добавьте эту проверку
+            )
         )
-        return [r.to_dict() for r in result.scalars().all()]
-
+        reminders = result.scalars().all()
+        return [{
+            'id': r.id,
+            'user_id': r.user_id,
+            'text': r.text,
+            'due': r.due,
+            'repeat': r.repeat,
+            'is_active': r.is_active
+        } for r in reminders]
 # обновить дату напоминания
 async def update_reminder_due(reminder_id, new_due):
     async with get_db() as session:
@@ -720,13 +758,7 @@ async def update_reminder_due(reminder_id, new_due):
             reminder.due = new_due
             await session.commit()
 
-# удалить напоминание
-async def delete_reminder(reminder_id):
-    async with get_db() as session:
-        reminder = await session.get(Reminder, reminder_id)
-        if reminder:
-            await session.delete(reminder)
-            await session.commit()
+
 
 # получить валютные настройки пользователя
 async def get_user_currency_settings(user_id):
@@ -737,49 +769,55 @@ async def get_user_currency_settings(user_id):
         return None
 
 
-async def create_debt_from_ai(debt_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+async def create_debts_from_ai(debts_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Создать долг на основе JSON, полученного от ИИ.
-    Ожидает словарь с ключами:
+    Создать несколько долгов (до 10) на основе JSON, полученного от ИИ.
+    Ожидает список словарей с ключами:
     user_id, person, amount, currency, direction, date, due, comment
     """
+    results: List[Dict[str, Any]] = []
+
     async with get_db() as session:
         try:
-            # Проверим, что пользователь существует
-            user = await session.get(User, debt_data["user_id"])
-            if not user:
-                user = User(user_id=debt_data["user_id"])
-                session.add(user)
+            for idx, debt_data in enumerate(debts_data[:10], start=1):
+                # Проверим, что пользователь существует
+                user = await session.get(User, debt_data["user_id"])
+                if not user:
+                    user = User(user_id=debt_data["user_id"])
+                    session.add(user)
+                    await session.flush()
+
+                new_debt = Debt(
+                    user_id=debt_data["user_id"],
+                    person=debt_data["person"],
+                    amount=debt_data["amount"],
+                    currency=debt_data["currency"],
+                    direction=debt_data["direction"],
+                    date=debt_data.get("date", datetime.utcnow().date().isoformat()),
+                    due=debt_data["due"],
+                    comment=debt_data.get("comment", "")
+                )
+                session.add(new_debt)
                 await session.flush()
 
-            new_debt = Debt(
-                user_id=debt_data["user_id"],
-                person=debt_data["person"],
-                amount=debt_data["amount"],
-                currency=debt_data["currency"],
-                direction=debt_data["direction"],
-                date=debt_data.get("date", datetime.utcnow().date().isoformat()),
-                due=debt_data["due"],
-                comment=debt_data.get("comment", "")
-            )
-            session.add(new_debt)
-            await session.flush()
+                results.append({
+                    'id': new_debt.id,
+                    'user_id': new_debt.user_id,
+                    'person': new_debt.person,
+                    'amount': new_debt.amount,
+                    'currency': new_debt.currency,
+                    'direction': new_debt.direction,
+                    'date': new_debt.date,
+                    'due': new_debt.due,
+                    'comment': new_debt.comment,
+                    'closed': new_debt.closed
+                })
+
             await session.commit()
+            print(f"✅ Добавлено долгов: {len(results)}")
+            return results
 
-            return {
-                'id': new_debt.id,
-                'user_id': new_debt.user_id,
-                'person': new_debt.person,
-                'amount': new_debt.amount,
-                'currency': new_debt.currency,
-                'direction': new_debt.direction,
-                'date': new_debt.date,
-                'due': new_debt.due,
-                'comment': new_debt.comment,
-                'closed': new_debt.closed
-            }
         except Exception as e:
-            print(f"❌ Ошибка при создании долга через ИИ: {e}")
+            print(f"❌ Ошибка при создании долгов через ИИ: {e}")
             await session.rollback()
-            return None
-
+            return []

@@ -64,6 +64,12 @@ async def add_debts_menu(user_id: int) -> InlineKeyboardMarkup:
                 callback_data=CallbackData.AI_DEBT_ADD
             )
         ],
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'back'),
+                callback_data=CallbackData.BACK_MAIN
+            )
+        ]
 
     ])
 
