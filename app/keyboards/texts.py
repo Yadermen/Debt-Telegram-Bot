@@ -362,7 +362,7 @@ LANGS = {
         "text_only_please": "Faqat tekst, iltimos",
         "export_excel_btn": "📊 Excelga eksport",
         "export_loading": "⏳ Eksport tayyorlanmoqda...",
-        "export_success_caption": "📊 Eksport muvaffaqiyatli tugallandi!\n\n📝 Fayl quyidagilarni o'z ichiga oladi:\n• Barcha faol qarzlar\n• Qarzdorlar/kreditorlar haqida ma'lumot\n• Summalar va valyutalar\n• Sanalar va sharhlar\nhttps://telegra.ph/Kak-ispravit-oshibku-pri-otkrytii-fajla-Exel-10-03",
+        "export_success_caption": "📊 Eksport muvaffaqiyatli tugallandi!\n\n📝 Fayl quyidagilarni o'z ichiga oladi:\n• Barcha faol qarzlar\n• Qarzdorlar/kreditorlar haqida ma'lumot\n• Summalar va valyutalar\n• Sanalar va sharhlar\nhttps://telegra.ph/Qanday-qilib-Exel-faylini-eksportidagi-hatolikni-tuzatish-10-03",
         "export_error": "❌ Ma'lumotlarni eksport qilishda xatolik. Keyinroq urinib ko'ring.",
         "back_main_btn": "🏠 Asosiy menyu",
         "export_col_id": "ID",

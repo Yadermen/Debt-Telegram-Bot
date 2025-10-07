@@ -43,6 +43,7 @@ async def debts_list_keyboard_paginated(debts: list, user_id: int, page: int = 0
         keyboard.append(nav_buttons)
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+#тут убрали кнопку
 
 
 async def debts_list_keyboard(debts: list, user_id: int) -> InlineKeyboardMarkup:

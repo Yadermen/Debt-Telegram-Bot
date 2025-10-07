@@ -16,18 +16,14 @@ CACHE_DURATION = 300  # 5 минут
 class CurrencyService:
     """Сервис для работы с курсами валют"""
 
-    # Используем бесплатный API (или можно заменить на другой)
+    # Используем бесплатный API
     BASE_URL = "https://api.exchangerate-api.com/v4/latest/USD"
-
-    # Альтернативы:
-    # "https://open.er-api.com/v6/latest/USD"
-    # "https://api.fxratesapi.com/latest?base=USD"
 
     @staticmethod
     async def get_exchange_rates() -> Optional[Dict[str, float]]:
         """
-        Получить актуальные курсы валют
-        Возвращает словарь вида: {"USD": 1.0, "EUR": 0.85, "UZS": 12450.0}
+        Получить актуальные курсы валют относительно UZS
+        Возвращает словарь вида: {"USD": 12000.0, "EUR": 11000.0, "RUB": 165.0}
         """
         global _currency_cache, _cache_expires
 
@@ -44,18 +40,25 @@ class CurrencyService:
                     if response.status == 200:
                         data = await response.json()
 
-                        # Извлекаем нужные нам курсы
+                        # Получаем курсы относительно USD
+                        usd_rates = data.get("rates", {})
+                        uzs_per_usd = usd_rates.get("UZS", 12450.0)
+                        eur_per_usd = usd_rates.get("EUR", 0.85)
+                        rub_per_usd = usd_rates.get("RUB", 90.0)
+
+                        # Конвертируем все в UZS (сколько UZS за 1 единицу валюты)
                         rates = {
-                            "USD": 1.0,  # базовая валюта
-                            "EUR": data.get("rates", {}).get("EUR", 0.85),
-                            "UZS": data.get("rates", {}).get("UZS", 12450.0),
-                            "RUB": data.get("rates", {}).get("RUB", 90.0)  # 👈 добавляем рубль
+                            "UZS": 1.0,  # базовая валюта
+                            "USD": round(uzs_per_usd, 2),  # сколько UZS за 1 USD
+                            "EUR": round(uzs_per_usd / eur_per_usd, 2),  # сколько UZS за 1 EUR
+                            "RUB": round(uzs_per_usd / rub_per_usd, 2)  # сколько UZS за 1 RUB
                         }
+
                         # Сохраняем в кэш
                         _currency_cache = rates
                         _cache_expires = datetime.now() + timedelta(seconds=CACHE_DURATION)
 
-                        print(f"✅ Курсы обновлены: USD=1, EUR={rates['EUR']}, UZS={rates['UZS']}")
+                        print(f"✅ Курсы обновлены: USD={rates['USD']}, EUR={rates['EUR']}, RUB={rates['RUB']} UZS")
                         return rates
 
                     else:
@@ -78,10 +81,10 @@ class CurrencyService:
     def _get_fallback_rates() -> Dict[str, float]:
         """Резервные курсы валют на случай недоступности API"""
         fallback_rates = {
-            "USD": 1.0,
-            "EUR": 0.85,
-            "UZS": 12450.0,
-            "RUB": 90.0
+            "UZS": 1.0,
+            "USD": 12000.0,
+            "EUR": 11000.0,
+            "RUB": 165.0
         }
 
         print("⚠️ Используем резервные курсы валют")
@@ -107,27 +110,24 @@ class CurrencyService:
             # Форматируем красивое сообщение
             message_parts = [f"{await tr(user_id, 'currency_rates')}:"]
 
-            # USD всегда 1.0 (базовая валюта)
-            message_parts.append(f"🇺🇸 USD: 1.00")
+            # USD к UZS
+            if "USD" in rates:
+                usd_rate = rates["USD"]
+                message_parts.append(f"🇺🇸 USD: {usd_rate:.0f} UZS")
 
-            # EUR к USD
+            # EUR к UZS
             if "EUR" in rates:
                 eur_rate = rates["EUR"]
-                message_parts.append(f"🇪🇺 EUR: {eur_rate:.4f}")
+                message_parts.append(f"🇪🇺 EUR: {eur_rate:.0f} UZS")
 
-            # UZS к USD
-            if "UZS" in rates:
-                uzs_rate = rates["UZS"]
-                message_parts.append(f"🇺🇿 UZS: {uzs_rate:.2f}")
-
-            # RUB к USD
+            # RUB к UZS
             if "RUB" in rates:
                 rub_rate = rates["RUB"]
-                message_parts.append(f"🇷🇺 RUB: {rub_rate:.2f}")
+                message_parts.append(f"🇷🇺 RUB: {rub_rate:.0f} UZS")
 
             # Добавляем время обновления
             current_time = datetime.now().strftime("%H:%M")
-            message_parts.append(f"\n{await tr(user_id, "updated")} {current_time}")
+            message_parts.append(f"\n{await tr(user_id, 'updated')} {current_time}")
 
             return "\n".join(message_parts)
 
@@ -146,9 +146,9 @@ class CurrencyService:
             if not rates or from_currency not in rates or to_currency not in rates:
                 return None
 
-            # Конвертируем через USD как базовую валюту
-            usd_amount = amount / rates[from_currency]
-            result = usd_amount * rates[to_currency]
+            # Конвертируем через UZS как базовую валюту
+            uzs_amount = amount * rates[from_currency]
+            result = uzs_amount / rates[to_currency]
 
             return round(result, 2)
 

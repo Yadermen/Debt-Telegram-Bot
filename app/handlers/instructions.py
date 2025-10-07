@@ -79,30 +79,49 @@ async def show_instructions(call: CallbackQuery, state: FSMContext):
 """
 
         instruction_text_uz = """
-📖 **Botdan qanday foydalanish:**
+Asosiy menyu
 
-1️⃣ **Qarz qo'shish** - qarz haqida yozuv yaratish
-   • Shaxsning ismini kiriting
-   • Valyutani tanlang (USD, UZS, EUR)
-   • Summani kiriting
-   • Qaytarish sanasini belgilang
-   • Yo'nalishni tanlang (berdingiz/oldingiz)
-   • Izoh qo'shing (ixtiyoriy)
+➕ Qarzni qo‘shish – yangi qarz qo‘shish:
 
-2️⃣ **Qarzlarim** - barcha qarzlarni ko'rish
-   • Barcha faol qarzlar ro'yxati
-   • Tafsilotlar uchun qarzga bosing
-   • Tahrirlash, yopish yoki o'chirish mumkin
+Oddiy: bosqichma-bosqich qo‘shish
+• Shaxs ismi
+• Valyuta (USD, UZS, EUR)
+• Miqdor
+• Qaytarish sanasi
+• Yo‘nalish (men qarzdorman / menga qarzdor)
+• Izoh (majburiy emas)
 
-3️⃣ **Sozlamalar** - bildirishnomalarni boshqarish
-   • Eslatma vaqtini belgilang
-   • Bot qarzlar haqida bildirishnoma yuboradi
+AI orqali: barcha ma’lumotni bitta matnda kiriting:
+yo‘nalish, kontragent, miqdor va valyuta, muddat, izoh (majburiy emas)
+Misol: men qarzdorman Ali 250 USD 2025-10-05 tushlik uchun
 
-4️⃣ **Hammasini o'chirish** - barcha qarzlarni o'chirish
+📋 Mening qarzlarim – barcha qarzlar ro‘yxati:
+Har bir yozuv qarz kartasiga olib boradi
+Qarz tafsilotlari: to‘lash, o‘zgartirish, uzaytirish yoki o‘chirish mumkin
 
-5️⃣ **Tilni o'zgartirish** - tillar o'rtasida almashtirish
+📊 Excel-ga eksport – barcha qarzlarni eksport qilish
+🧹 Hammasini tozalash – barcha qarzlarni o‘chirish
+⬅️ Orqaga – asosiy menyuga qaytish
 
-❓ Savollar bo'lsa, sinov qarzini qo'shib, bot funktsiyalarini sinab ko'ring.
+🔔 Eslatmalar – bildirishnomalarni boshqarish:
+Yangi eslatma qo‘shish (sana va takrorlash bilan)
+Qarzlar uchun eslatmalarni yoqish/o‘chirish
+Bildirish vaqti sozlash
+Avtomatik bildirishnomalarni sozlash:
+⏰ Valyuta kursini ertalab yoqish (7:00)
+⏰ Valyuta kursini kechqurun yoqish (17:00)
+❌ Valyuta kursini o‘chirish
+
+💱 Valyuta kursi – valyutalarni ko‘rish va konvertatsiya:
+UZS, USD, EUR, RUB va boshqalar
+
+⚙️ Sozlamalar – tilni o‘zgartirish va bot sozlamalari
+
+ℹ️ Yordam – botdan foydalanish bo‘yicha qisqacha ko‘rsatma
+
+💡 Maslahat: avval test qarz qo‘shib ko‘ring, shunda barcha funksiyalarni tushunasiz.
+
+📣 Bot yangiliklari va yangilanishlarini kanalimizdan kuzatib boring: @QarzNazorat
 """
 
         # Выбираем текст и ссылку в зависимости от языка
