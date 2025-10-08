@@ -398,9 +398,9 @@ class ReminderScheduler:
 
     async def send_general_reminders(self):
         """Проверка и отправка одноразовых напоминаний"""
-        print("\n" + "="*50)
+        print("\n" + "=" * 50)
         print("⏰ ЗАПУСК: send_general_reminders")
-        print("="*50)
+        print("=" * 50)
 
         if not self.bot:
             print("❌ Bot не установлен в scheduler")
@@ -408,6 +408,7 @@ class ReminderScheduler:
 
         try:
             from app.database.crud import update_reminder
+            from app.database.connection import AsyncSessionLocal  # 👈 Правильный импорт
 
             now = datetime.now().replace(second=0, microsecond=0)
             print(f"🕐 Текущее время: {now}")
@@ -428,9 +429,11 @@ class ReminderScheduler:
                 print(f"   is_active: {r.get('is_active', 'N/A')}")
 
                 try:
-                    print(f"   ⏳ Деактивация напоминания...")
-                    updated = await update_reminder(None, r['id'], is_active=False)
-                    print(f"   {'✅' if updated else '❌'} Деактивация: {updated}")
+                    # 👇 Создаём сессию для обновления
+                    async with AsyncSessionLocal() as session:
+                        print(f"   ⏳ Деактивация напоминания...")
+                        updated = await update_reminder(session, r['id'], is_active=False)
+                        print(f"   {'✅' if updated else '❌'} Деактивация: {updated}")
 
                     text = f"⏰ {r['text']}\n🕒 {r['due']}"
                     print(f"   📤 Отправка сообщения пользователю {r['user_id']}")
@@ -445,7 +448,7 @@ class ReminderScheduler:
             print(f"❌ Критическая ошибка в send_general_reminders: {e}")
             traceback.print_exc()
         finally:
-            print("="*50 + "\n")
+            print("=" * 50 + "\n")
 
     async def send_currency_alerts(self, user_id: int):
         """Отправить валютное уведомление конкретному пользователю"""
