@@ -378,7 +378,8 @@ async def get_all_users() -> List[Dict[str, Any]]:
                 users.append({
                     'user_id': user.user_id,
                     'lang': user.lang,
-                    'notify_time': user.notify_time
+                    'notify_time': user.notify_time,
+                    'currency_notify_time': user.currency_notify_time  # ✅ ДОБАВЬ ЭТУ СТРОКУ
                 })
             return users
     except Exception as e:

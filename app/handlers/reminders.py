@@ -2,7 +2,7 @@ from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import select
 
@@ -16,6 +16,8 @@ from app.database.crud import (
 from app.database.models import Reminder
 from app.keyboards.texts import tr
 from app.keyboards.callbacks import CallbackData, DynamicCallbacks
+from aiogram.filters import Command
+import pytz
 
 router = Router()
 
@@ -485,6 +487,133 @@ async def debt_reminders_kb(user_id: int) -> InlineKeyboardMarkup:
         ]
     )
     return kb
+
+
+@router.message(Command("check_tasks"))
+async def check_scheduled_tasks(message: types.Message):
+    """Показать все запланированные задачи"""
+    from app.utils.scheduler import scheduler
+
+    jobs = scheduler.scheduler.get_jobs()
+
+    # Считаем валютные задачи
+    currency_jobs = [j for j in jobs if 'currency' in j.id]
+    debt_jobs = [j for j in jobs if 'reminder' in j.id and 'currency' not in j.id]
+    global_jobs = [j for j in jobs if 'global' in j.id or j.id == 'due_reminders']
+
+    text = f"📋 Статистика задач:\n\n"
+    text += f"💱 Валютных уведомлений: {len(currency_jobs)}\n"
+    text += f"📥 Долговых напоминаний: {len(debt_jobs)}\n"
+    text += f"🌐 Глобальных задач: {len(global_jobs)}\n"
+    text += f"📊 Всего задач: {len(jobs)}\n\n"
+
+    # Показываем валютные задачи для текущего пользователя
+    user_currency = [j for j in currency_jobs if str(message.from_user.id) in j.id]
+    if user_currency:
+        text += f"✅ У тебя ЕСТЬ валютное уведомление:\n"
+        for job in user_currency:
+            if hasattr(job.trigger, 'hour'):
+                text += f"  ⏰ Время: {job.trigger.hour:02d}:{job.trigger.minute:02d}\n"
+    else:
+        text += f"❌ У тебя НЕТ валютного уведомления!\n"
+
+    await message.answer(text)
+
+
+
+@router.message(Command("test_currency"))
+async def test_currency_time(message: types.Message):
+    """Установить валютное уведомление на следующую минуту (UTC+5)"""
+    tz = pytz.timezone("Asia/Tashkent")
+
+    # Берем текущее время в UTC+5 + 1 минута
+    now = datetime.now(tz)
+    test_time = now + timedelta(minutes=1)
+    time_str = test_time.strftime("%H:%M")
+
+    async with get_db() as session:
+        await set_user_currency_time(session, message.from_user.id, time_str)
+
+    await message.answer(
+        f"✅ Валютное уведомление установлено на {time_str} (Asia/Tashkent)\n"
+        f"⏰ Текущее время (UTC+5): {now.strftime('%H:%M')}\n"
+        f"📱 Жди уведомление через ~1 минуту!"
+    )
+
+    # Перепланируем задачи
+    from app.utils.scheduler import scheduler
+    await scheduler.schedule_all_reminders()
+
+
+
+
+@router.message(Command("time"))
+async def check_time(message: types.Message):
+    """Показать текущее время в разных зонах"""
+    utc_now = datetime.now(pytz.UTC)
+    tashkent_tz = pytz.timezone('Asia/Tashkent')
+    tashkent_now = datetime.now(tashkent_tz)
+    local_now = datetime.now()
+
+    text = f"""
+🕐 **Проверка времени**
+
+🌍 UTC: `{utc_now.strftime('%Y-%m-%d %H:%M:%S')}`
+🇺🇿 Ташкент (UTC+5): `{tashkent_now.strftime('%Y-%m-%d %H:%M:%S')}`
+💻 Сервер: `{local_now.strftime('%Y-%m-%d %H:%M:%S')}`
+
+✅ Бот работает по времени: **{tashkent_tz}**
+    """
+    await message.answer(text, parse_mode="Markdown")
+
+
+@router.message(Command("debug_jobs"))
+async def debug_jobs(message: types.Message):
+    """Посмотреть детальную информацию о задачах"""
+    from app.utils.scheduler import scheduler
+
+    jobs = scheduler.scheduler.get_jobs()
+
+    # Ищем валютную задачу для этого пользователя
+    user_job = None
+    for job in jobs:
+        if f'user_currency_{message.from_user.id}' == job.id:
+            user_job = job
+            break
+
+    if not user_job:
+        await message.answer("❌ Валютная задача НЕ найдена!")
+        return
+
+    # Детальная инфа о задаче
+    text = f"✅ Задача найдена!\n\n"
+    text += f"🆔 ID: {user_job.id}\n"
+    text += f"📝 Функция: {user_job.func.__name__}\n"
+    text += f"⏰ Триггер: {user_job.trigger}\n"
+
+    if hasattr(user_job.trigger, 'hour'):
+        text += f"🕐 Час: {user_job.trigger.hour}\n"
+        text += f"🕐 Минута: {user_job.trigger.minute}\n"
+
+    if hasattr(user_job.trigger, 'timezone'):
+        text += f"🌍 Timezone: {user_job.trigger.timezone}\n"
+
+    # Следующий запуск
+    next_run = user_job.next_run_time
+    if next_run:
+        text += f"\n⏭️ Следующий запуск:\n{next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+
+        # Текущее время в разных зонах
+        from datetime import datetime
+        import pytz
+
+        now_utc = datetime.now(pytz.UTC)
+        now_tashkent = datetime.now(pytz.timezone('Asia/Tashkent'))
+
+        text += f"\n🕐 Сейчас (UTC): {now_utc.strftime('%H:%M:%S')}"
+        text += f"\n🕐 Сейчас (Ташкент): {now_tashkent.strftime('%H:%M:%S')}"
+
+    await message.answer(text)
 
 async def check_reminders(bot):
     now = datetime.now().replace(second=0, microsecond=0)  # текущее время без секунд

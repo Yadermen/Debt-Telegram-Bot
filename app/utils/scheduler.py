@@ -14,11 +14,12 @@ from app.database.crud import (
     update_reminder_due,
     delete_reminder
 )
+from app.keyboards import main_menu
 
 
 class ReminderScheduler:
     def __init__(self):
-        self.scheduler = AsyncIOScheduler(timezone='Asia/Tashkent')
+        self.scheduler = AsyncIOScheduler()
         self.bot = None
         self.started = False
         self.running = False
@@ -265,6 +266,7 @@ class ReminderScheduler:
                             'cron',
                             hour=hour,
                             minute=minute,
+                            timezone='Asia/Tashkent',  # ← И ТУТ
                             id=f'user_reminder_{user_id}',
                             args=[user_id],
                             replace_existing=True
@@ -290,6 +292,7 @@ class ReminderScheduler:
                             'cron',
                             hour=hour,
                             minute=minute,
+                            timezone='Asia/Tashkent',  # ← ДОБАВЬ ЭТУ СТРОКУ
                             id=f'user_currency_{user_id}',
                             args=[user_id],
                             replace_existing=True
@@ -309,6 +312,7 @@ class ReminderScheduler:
                 self.send_general_reminders,
                 'interval',
                 minutes=1,
+                timezone='Asia/Tashkent',
                 id='general_reminders_global',
                 replace_existing=True
             )
@@ -318,6 +322,7 @@ class ReminderScheduler:
                 self.send_repeating_reminders,
                 'interval',
                 minutes=1,
+                timezone='Asia/Tashkent',
                 id='repeating_reminders_global',
                 replace_existing=True
             )
@@ -327,6 +332,7 @@ class ReminderScheduler:
                 self.send_due_reminders,
                 'cron',
                 hour='*',
+                timezone='Asia/Tashkent',
                 id='due_reminders',
                 replace_existing=True
             )
@@ -452,9 +458,11 @@ class ReminderScheduler:
 
     async def send_currency_alerts(self, user_id: int):
         """Отправить валютное уведомление конкретному пользователю"""
-        print("\n" + "="*50)
+        print("\n" + "=" * 50)
         print(f"💱 ЗАПУСК: send_currency_alerts для user_id={user_id}")
-        print("="*50)
+        print(f"🕐 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"🤖 Bot установлен: {self.bot is not None}")
+        print("=" * 50)
 
         if not self.bot:
             print("❌ Bot не установлен в scheduler")
@@ -464,19 +472,25 @@ class ReminderScheduler:
             from app.utils.currency_api import format_currency_notification
             from app.keyboards import tr
 
-            print(f"🌐 Запрос валютных данных...")
-            message = await format_currency_notification(user_id, tr)
-            print(f"📝 Сообщение сформировано: {len(message)} символов")
+            print(f"📥 Импорты успешны")
+            print(f"🌐 Запрос валютных данных для user {user_id}...")
 
-            print(f"📤 Отправка сообщения пользователю {user_id}")
-            await self.bot.send_message(user_id, message)
-            print(f"✅ Валютное уведомление отправлено пользователю {user_id}")
+            message = await format_currency_notification(user_id, tr)
+
+            print(f"📝 Сообщение сформировано:")
+            print(f"   Длина: {len(message)} символов")
+            print(f"   Первые 200 символов: {message[:200]}")
+
+            print(f"📤 Попытка отправки боту...")
+            result = await self.bot.send_message(user_id, message, reply_markup=main_menu)
+            print(f"✅ Сообщение отправлено! Message ID: {result.message_id}")
 
         except Exception as e:
-            print(f"❌ Ошибка валютного уведомления для {user_id}: {e}")
+            print(f"❌ ОШИБКА валютного уведомления: {e}")
+            import traceback
             traceback.print_exc()
         finally:
-            print("="*50 + "\n")
+            print("=" * 50 + "\n")
 
     async def send_repeating_reminders(self):
         """Проверка и отправка повторяющихся напоминаний"""
