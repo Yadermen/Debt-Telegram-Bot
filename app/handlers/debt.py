@@ -130,6 +130,7 @@ async def combined_debts_menu(debts, user_id: int, page: int = 0) -> InlineKeybo
 
 
 # === НАВИГАЦИЯ ПО СТРАНИЦАМ ===
+
 @router.callback_query(lambda c: c.data.startswith('debts_page_'))
 async def debts_page_navigation(call: CallbackQuery, state: FSMContext):
     """Навигация по страницам долгов"""
@@ -149,17 +150,9 @@ async def debts_page_navigation(call: CallbackQuery, state: FSMContext):
             return
 
         text = await tr(user_id, 'your_debts')
-        markup = await debts_list_keyboard_paginated(debts, user_id, page=page)
-        debts_kb = await debts_list_keyboard_paginated(debts, user_id, page=0)
 
-        # 2. подменю (экспорт, очистить, назад)
-        submenu_kb = await my_debts_menu(user_id)
-
-        # 3. объединяем
-        combined = InlineKeyboardMarkup(inline_keyboard=[
-            *debts_kb.inline_keyboard,
-            *submenu_kb.inline_keyboard
-        ])
+        # Используем готовую функцию для объединения клавиатур
+        combined = await combined_debts_menu(debts, user_id, page=page)
 
         await safe_edit_message(call, text, combined)
     except Exception as e:

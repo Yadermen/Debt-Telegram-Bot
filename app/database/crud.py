@@ -780,13 +780,15 @@ async def create_debts_from_ai(debts_data: List[Dict[str, Any]]) -> List[Dict[st
 
     async with get_db() as session:
         try:
+            # Собираем все объекты перед commit
+            debts_to_add = []
+
             for idx, debt_data in enumerate(debts_data[:10], start=1):
                 # Проверим, что пользователь существует
                 user = await session.get(User, debt_data["user_id"])
                 if not user:
                     user = User(user_id=debt_data["user_id"])
                     session.add(user)
-                    await session.flush()
 
                 new_debt = Debt(
                     user_id=debt_data["user_id"],
@@ -798,23 +800,27 @@ async def create_debts_from_ai(debts_data: List[Dict[str, Any]]) -> List[Dict[st
                     due=debt_data["due"],
                     comment=debt_data.get("comment", "")
                 )
+                debts_to_add.append(new_debt)
                 session.add(new_debt)
-                await session.flush()
 
+            # 🔧 Один commit для всех долгов
+            await session.commit()
+
+            # Теперь у всех долгов есть id
+            for debt in debts_to_add:
                 results.append({
-                    'id': new_debt.id,
-                    'user_id': new_debt.user_id,
-                    'person': new_debt.person,
-                    'amount': new_debt.amount,
-                    'currency': new_debt.currency,
-                    'direction': new_debt.direction,
-                    'date': new_debt.date,
-                    'due': new_debt.due,
-                    'comment': new_debt.comment,
-                    'closed': new_debt.closed
+                    'id': debt.id,
+                    'user_id': debt.user_id,
+                    'person': debt.person,
+                    'amount': debt.amount,
+                    'currency': debt.currency,
+                    'direction': debt.direction,
+                    'date': debt.date,
+                    'due': debt.due,
+                    'comment': debt.comment,
+                    'closed': debt.closed
                 })
 
-            await session.commit()
             print(f"✅ Добавлено долгов: {len(results)}")
             return results
 

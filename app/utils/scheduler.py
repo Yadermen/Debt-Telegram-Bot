@@ -327,15 +327,7 @@ class ReminderScheduler:
                 replace_existing=True
             )
 
-            print("  ➕ Добавление due_reminders")
-            self.scheduler.add_job(
-                self.send_due_reminders,
-                'cron',
-                hour='*',
-                timezone='Asia/Tashkent',
-                id='due_reminders',
-                replace_existing=True
-            )
+
 
             # Итоговая статистика
             all_jobs = self.scheduler.get_jobs()
@@ -344,6 +336,16 @@ class ReminderScheduler:
             print(f"   ✅ Валютных уведомлений: {currency_reminders_count}")
             print(f"   ✅ Глобальных задач: 3")
             print(f"   📋 Всего активных задач: {len(all_jobs)}")
+
+            print(f"\n🔍 ВАЛЮТНЫЕ ЗАДАЧИ:")
+            for job in self.scheduler.get_jobs():
+                if 'currency' in job.id:
+                    print(f"   📌 {job.id}")
+                    print(f"      next_run: {job.next_run_time}")
+                    print(f"      trigger: {job.trigger}")
+                    print()
+
+
 
 
 
@@ -482,7 +484,7 @@ class ReminderScheduler:
             print(f"   Первые 200 символов: {message[:200]}")
 
             print(f"📤 Попытка отправки боту...")
-            result = await self.bot.send_message(user_id, message, reply_markup=main_menu)
+            result = await self.bot.send_message(user_id, message, reply_markup=await main_menu(user_id))
             print(f"✅ Сообщение отправлено! Message ID: {result.message_id}")
 
         except Exception as e:

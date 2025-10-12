@@ -61,7 +61,7 @@ class DebtAI(BaseModel):
     counterparty_name: str
     amount: float
     currency: str
-    due_date: str
+    due_date: str | None = None  # 🔧 Разрешаем None
     description: str | None = ""
 
     @field_validator("who_owes")
@@ -92,6 +92,10 @@ class DebtAI(BaseModel):
 
     @field_validator("due_date")
     def iso_date(cls, v):
+        # 🔧 Если None - ставим дату через 14 дней
+        if v is None:
+            return (datetime.now() + timedelta(days=14)).date().isoformat()
+
         try:
             isoparse(v)
         except Exception:
