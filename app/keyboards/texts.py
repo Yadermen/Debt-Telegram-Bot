@@ -416,7 +416,7 @@ LANGS = {
         "debt_reminders_text": "Avtomatik qarz eslatmasi (3 kun oldin, agar qarz muddati tugagan bo'lsa har kuni).",
         "enable_debt": "⏰ Eslatmalarni yoqish",
         "disable_debt": "❌ Eslatmalarni o'chirish",
-        "set_time": "⚙️ Vaqtini o'zgartirish",
+        "set_time": "Vaqtini o'zgartirish",
 
         # Подменю «Напоминания о курсе валют»
         "currency_reminders_text": "Misol uchun dollar kursi har kuni soat 7:00.",
