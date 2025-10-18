@@ -60,7 +60,7 @@ async def cancel_kb(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=await tr(user_id, "cancel_btn"),
-                                  callback_data=CallbackData.REMINDERS_MENU)]
+                                  callback_data=CallbackData.BACK_MAIN_REMINDER)]
         ]
     )
 
@@ -85,24 +85,20 @@ async def reminders_main_kb(user_id: int) -> InlineKeyboardMarkup:
 
 @router.callback_query(F.data == CallbackData.BACK_MAIN_REMINDER)
 async def back_main_reminder(call: CallbackQuery, state: FSMContext):
-    """Возврат в главное меню"""
     # убираем "часики"
     await call.answer()
 
     try:
         await state.clear()
-        text = await tr(call.from_user.id, 'choose_action')
-        markup = await main_menu(call.from_user.id)
-
-        # правильная отправка сообщения
-        await call.message.answer(text=text, reply_markup=markup)
-
+        # просто удаляем сообщение с меню
+        await call.message.delete()
     except Exception as e:
         print(f"❌ Ошибка в back_main: {e}")
         try:
-            await call.answer("❌ Ошибка перехода в меню", show_alert=True)
+            await call.answer("❌ Ошибка при удалении сообщения", show_alert=True)
         except:
             pass
+
 
 @router.callback_query(F.data == CallbackData.REMINDERS_MENU)
 async def open_reminders_menu(callback: CallbackQuery):
@@ -178,12 +174,16 @@ async def toggle_debt_reminders(callback: CallbackQuery):
     await open_debt_reminders(callback)
 
 
+
 @router.callback_query(F.data == CallbackData.SETUP_REMINDER_TIME)
 async def setup_reminder_time(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer(
+    sent_message = await callback.message.answer(
         await tr(callback.from_user.id, "notify_time"),
         reply_markup=await cancel_kb(callback.from_user.id)
     )
+
+    # Сохраняем ID сообщения бота
+    await state.update_data(bot_message_id=sent_message.message_id)
     await state.set_state(DebtReminderForm.time)
     print(f"[LOG] Запрос времени долгового напоминания для user={callback.from_user.id}")
     await callback.answer()
@@ -207,10 +207,23 @@ async def process_debt_time(message: types.Message, state: FSMContext):
         await set_debt_reminder_time(session, message.from_user.id, t.strftime("%H:%M"))
         print(f"[LOG] Установлено время долгового напоминания user={message.from_user.id}, time={t.strftime('%H:%M')}")
 
+    # Получаем ID предыдущего сообщения бота
+    data = await state.get_data()
+    prev_bot_msg_id = data.get("bot_message_id")
+
+    # Удаляем сообщение пользователя и предыдущее сообщение бота
+    if message.chat.type == "private":
+        try:
+            await message.delete()
+            if prev_bot_msg_id:
+                await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+        except Exception as e:
+            print(f"Ошибка при удалении: {e}")
+
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ " + await tr(message.from_user.id, "back_btn"),
-                                  callback_data=CallbackData.DEBT_REMINDERS)]
+                                  callback_data=CallbackData.BACK_MAIN_REMINDER)]
         ]
     )
 
@@ -382,20 +395,31 @@ async def edit_text(message: types.Message, state: FSMContext):
                                   callback_data=CallbackData.MY_REMINDERS)]
         ]
     )
-    await message.answer(await tr(message.from_user.id, "reminder_updated"), reply_markup=back_kb)
+    sent_message = await message.answer(await tr(message.from_user.id, "reminder_updated"), reply_markup=back_kb)
     await state.clear()
+
+    if message.chat.type == "private":
+        try:
+            await message.delete()
+            await sent_message.delete()
+        except Exception as e:
+            print(f"Ошибка при удалении: {e}")
 
 
 # --- Создание пользовательских напоминаний ---
 @router.callback_query(F.data == CallbackData.ADD_REMINDER)
 async def start_add_reminder(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer(await tr(callback.from_user.id, "start_add"), reply_markup=await cancel_kb(callback.from_user.id))
+    sent_message = await callback.message.answer(await tr(callback.from_user.id, "start_add"),
+                                                 reply_markup=await cancel_kb(callback.from_user.id))
+
+    # Сохраняем ID первого сообщения бота
+    await state.update_data(bot_message_id=sent_message.message_id)
     await state.set_state(ReminderForm.text)
     await callback.answer()
 
 @router.callback_query(F.data == CallbackData.BACK_MAIN_REMINDER)
 async def back_main_reminder(call: CallbackQuery, state: FSMContext):
-        await call.answer(text="fff")
+        await call.answer(text="")
         """Возврат в главное меню"""
         # 1. Сразу убираем "часики"
         await call.answer()
@@ -422,11 +446,38 @@ async def process_text(message: types.Message, state: FSMContext):
 
     text = message.text.strip()
     if not text:
-        await message.answer(await tr(message.from_user.id, "text_only_please"), reply_markup=await cancel_kb(message.from_user.id))
+        sent_message = await message.answer(await tr(message.from_user.id, "text_only_please"),
+                                            reply_markup=await cancel_kb(message.from_user.id))
+        if message.chat.type == "private":
+            try:
+                await message.delete()
+                await sent_message.delete()
+            except Exception as e:
+                print(f"Ошибка при удалении: {e}")
         return
 
+    # Сначала сохраняем текст в state
     await state.update_data(text=text)
-    await message.answer(await tr(message.from_user.id, "ask_due"), reply_markup=await cancel_kb(message.from_user.id))
+
+    # Получаем ID предыдущего сообщения бота (если есть)
+    data = await state.get_data()
+    prev_bot_msg_id = data.get("bot_message_id")
+
+    # Удаляем сообщение пользователя и предыдущее сообщение бота
+    if message.chat.type == "private":
+        try:
+            await message.delete()
+            if prev_bot_msg_id:
+                await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+        except Exception as e:
+            print(f"Ошибка при удалении: {e}")
+
+    # Отправляем новое сообщение
+    sent_message = await message.answer(await tr(message.from_user.id, "ask_due"),
+                                        reply_markup=await cancel_kb(message.from_user.id))
+
+    # Сохраняем ID нового сообщения бота
+    await state.update_data(bot_message_id=sent_message.message_id)
     await state.set_state(ReminderForm.due)
 
 
@@ -440,23 +491,44 @@ async def process_due(message: types.Message, state: FSMContext):
     try:
         due = datetime.strptime(message.text.strip(), "%Y-%m-%d %H:%M")
     except ValueError:
-        await message.answer(await tr(message.from_user.id, "bad_due"), reply_markup=await cancel_kb(message.from_user.id))
+        await message.answer(await tr(message.from_user.id, "bad_due"),
+                             reply_markup=await cancel_kb(message.from_user.id))
         return
 
+    # Сначала сохраняем дату в state
     await state.update_data(due=due)
 
+    # Получаем ID предыдущего сообщения бота
+    data = await state.get_data()
+    prev_bot_msg_id = data.get("bot_message_id")
+
+    # Удаляем сообщение пользователя и предыдущее сообщение бота
+    if message.chat.type == "private":
+        try:
+            await message.delete()
+            if prev_bot_msg_id:
+                await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+        except Exception as e:
+            print(f"Ошибка при удалении: {e}")
+
+    # Отправляем следующее сообщение
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=await tr(message.from_user.id, "repeat_none"), callback_data=CallbackData.REPEAT_NO)],
-            [InlineKeyboardButton(text=await tr(message.from_user.id, "repeat_daily"), callback_data=CallbackData.REPEAT_DAILY)],
-            [InlineKeyboardButton(text=await tr(message.from_user.id, "repeat_monthly"), callback_data=CallbackData.REPEAT_MONTHLY)],
+            [InlineKeyboardButton(text=await tr(message.from_user.id, "repeat_none"),
+                                  callback_data=CallbackData.REPEAT_NO)],
+            [InlineKeyboardButton(text=await tr(message.from_user.id, "repeat_daily"),
+                                  callback_data=CallbackData.REPEAT_DAILY)],
+            [InlineKeyboardButton(text=await tr(message.from_user.id, "repeat_monthly"),
+                                  callback_data=CallbackData.REPEAT_MONTHLY)],
             [InlineKeyboardButton(text="⬅️ " + await tr(message.from_user.id, "back_btn"),
-                                  callback_data=CallbackData.REMINDERS_MENU)],
+                                  callback_data=CallbackData.BACK_MAIN_REMINDER)],
         ]
     )
-    await message.answer(await tr(message.from_user.id, "ask_repeat"), reply_markup=kb)
-    await state.set_state(ReminderForm.repeat)
+    sent_message = await message.answer(await tr(message.from_user.id, "ask_repeat"), reply_markup=kb)
 
+    # Сохраняем ID нового сообщения бота
+    await state.update_data(bot_message_id=sent_message.message_id)
+    await state.set_state(ReminderForm.repeat)
 
 @router.callback_query(lambda c: c.data.startswith("repeat_"))
 async def process_repeat_cb(callback: CallbackQuery, state: FSMContext):
@@ -483,7 +555,7 @@ async def process_repeat_cb(callback: CallbackQuery, state: FSMContext):
         inline_keyboard=[
             [InlineKeyboardButton(
                 text="⬅️ " + await tr(callback.from_user.id, "back_btn"),
-                callback_data=CallbackData.REMINDERS_MENU
+                callback_data=CallbackData.BACK_MAIN_REMINDER
             )]
         ]
     )

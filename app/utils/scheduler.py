@@ -330,9 +330,7 @@ class ReminderScheduler:
             print(f"   ✅ Глобальных задач: 2")
             print(f"   📋 Всего активных задач: {len(all_jobs)}")
 
-            print(f"\n🔍 Список всех задач:")
-            for job in all_jobs:
-                print(f"   • {job.id} → next_run={job.next_run_time}")
+
 
         except Exception as e:
             print(f"❌ КРИТИЧЕСКАЯ ОШИБКА в schedule_all_reminders: {e}")

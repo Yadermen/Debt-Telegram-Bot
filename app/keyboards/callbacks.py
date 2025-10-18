@@ -19,6 +19,7 @@ class CallbackData:
     HOW_TO_USE = 'how_to_use'
     ADD_DEBT_MENU = 'add_debt_menu'
     BACK_MAIN_REMINDER = 'back_main_reminder'
+    BACK_MAIN_EXPORT = 'back_main_export'
 
     # === MY DEBTS SUBMENU ===
     DEBTS_LIST = 'debts_list'

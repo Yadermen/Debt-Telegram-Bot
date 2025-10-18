@@ -837,3 +837,15 @@ async def create_debts_from_ai(debts_data: List[Dict[str, Any]]) -> List[Dict[st
             print(f"❌ Ошибка при создании долгов через ИИ: {e}")
             await session.rollback()
             return []
+
+async def count_user_debts_today(user_id: int) -> int:
+    """Подсчитывает количество долгов, созданных пользователем сегодня"""
+    async with get_db() as session:
+        today = datetime.now().date().isoformat()
+        result = await session.execute(
+            select(func.count(Debt.id)).where(
+                Debt.user_id == user_id,
+                Debt.date == today
+            )
+        )
+        return result.scalar() or 0

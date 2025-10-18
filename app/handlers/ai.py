@@ -47,7 +47,7 @@ async def exit_kb(user_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(
                 text=await tr(user_id, 'to_menu'),
-                callback_data=CallbackData.BACK
+                callback_data=CallbackData.BACK_MAIN_REMINDER
             )]
         ]
     )
@@ -203,10 +203,13 @@ async def add_debt_ai_callback(call: CallbackQuery, state: FSMContext):
     print("📲 Нажата кнопка AI_DEBT_ADD")
     await state.set_state(DebtFSM.waiting_for_input)
     await call.answer()
-    await call.message.answer(
+    sent_message = await call.message.answer(
         await tr(call.from_user.id, 'ai_debt_input_hint'),
         reply_markup=await cancel_kb(call.from_user.id)
     )
+
+    # Сохраняем ID сообщения бота
+    await state.update_data(bot_message_id=sent_message.message_id)
 
 
 @router.callback_query(F.data == CallbackData.BACK)
@@ -227,8 +230,41 @@ async def back_to_main(call: CallbackQuery, state: FSMContext):
 async def ai_message_handler(m: Message, state: FSMContext):
     print("💬 Получено сообщение:", m.text)
 
+    data = await state.get_data()
+    prev_bot_msg_id = data.get("bot_message_id")
+
+    # Проверяем лимит перед парсингом
+    today_count = await crud.count_user_debts_today(m.from_user.id)
+    remaining = 50 - today_count
+
+    if remaining <= 0:
+        # Удаляем сообщение пользователя и предыдущее сообщение бота
+        if m.chat.type == "private":
+            try:
+                await m.delete()
+                if prev_bot_msg_id:
+                    await m.bot.delete_message(chat_id=m.chat.id, message_id=prev_bot_msg_id)
+            except Exception as e:
+                print(f"Ошибка при удалении: {e}")
+
+        await m.answer(
+            await tr(m.from_user.id, 'daily_limit_reached'),
+            reply_markup=await exit_kb(m.from_user.id)
+        )
+        await state.clear()
+        return
+
     parsed_list = await call_deepseek(m.text)
     if not parsed_list:
+        # Удаляем сообщение пользователя и предыдущее сообщение бота
+        if m.chat.type == "private":
+            try:
+                await m.delete()
+                if prev_bot_msg_id:
+                    await m.bot.delete_message(chat_id=m.chat.id, message_id=prev_bot_msg_id)
+            except Exception as e:
+                print(f"Ошибка при удалении: {e}")
+
         await m.answer(
             await tr(m.from_user.id, 'ai_parse_failed'),
             reply_markup=await cancel_kb(m.from_user.id)
@@ -258,6 +294,27 @@ async def ai_message_handler(m: Message, state: FSMContext):
             "comment": debt.description or ""
         }
         all_debts_jsons.append(debt_json)
+
+    # Ограничиваем количество долгов согласно лимиту
+    limit_exceeded = False
+    if len(all_debts_jsons) > remaining:
+        all_debts_jsons = all_debts_jsons[:remaining]
+        limit_exceeded = True
+
+    # Удаляем сообщение пользователя и предыдущее сообщение бота перед выводом результатов
+    if m.chat.type == "private":
+        try:
+            await m.delete()
+            if prev_bot_msg_id:
+                await m.bot.delete_message(chat_id=m.chat.id, message_id=prev_bot_msg_id)
+        except Exception as e:
+            print(f"Ошибка при удалении: {e}")
+
+    # Уведомляем о достижении лимита, если было обрезание
+    if limit_exceeded:
+        await m.answer(
+            await tr(m.from_user.id, 'daily_limit_partial', saved=remaining, total=len(parsed_list))
+        )
 
     # --- Сохраняем все долги одним вызовом ---
     new_debts = await crud.create_debts_from_ai(all_debts_jsons)
@@ -294,4 +351,3 @@ async def ai_message_handler(m: Message, state: FSMContext):
         await m.answer(text, reply_markup=await cancel_kb(m.from_user.id))
 
     await state.clear()
-

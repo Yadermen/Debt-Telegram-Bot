@@ -12,8 +12,8 @@ from ..keyboards.keyboards import add_debts_menu
 try:
     from ..database import (
         add_debt, get_open_debts, get_debt_by_id, update_debt,
-        soft_delete_debt, clear_user_debts, get_user_data, delete_debt
-    )
+        soft_delete_debt, clear_user_debts, get_user_data, delete_debt, crud
+)
     from ..keyboards import (
         tr, main_menu, currency_keyboard, direction_keyboard,
         skip_comment_keyboard, menu_button, debt_actions_keyboard,
@@ -256,12 +256,16 @@ async def add_debt_menu(call: CallbackQuery, state: FSMContext):
     # безопасное редактирование
     await safe_edit_message(call, text, kb)
 
+
 @router.callback_query(F.data == 'add_debt')
 async def add_debt_start(call: CallbackQuery, state: FSMContext):
     """Начало добавления долга"""
     try:
         await state.clear()
-        await call.message.edit_text(await tr(call.from_user.id, 'person'))
+        sent_message = await call.message.edit_text(await tr(call.from_user.id, 'person'))
+
+        # Сохраняем ID сообщения бота
+        await state.update_data(bot_message_id=sent_message.message_id)
         await state.set_state(AddDebt.person)
     except Exception as e:
         print(f"❌ Ошибка в add_debt_start: {e}")
@@ -275,6 +279,8 @@ async def add_debt_start(call: CallbackQuery, state: FSMContext):
 async def add_debt_person_simple(message: Message, state: FSMContext):
     """Получение имени должника с поддержкой узбекского языка"""
     user_id = message.from_user.id
+    data = await state.get_data()
+    prev_bot_msg_id = data.get("bot_message_id")
 
     try:
         # Проверяем тип сообщения
@@ -290,6 +296,15 @@ async def add_debt_person_simple(message: Message, state: FSMContext):
                     )]
                 ])
 
+                # Удаляем только сообщение пользователя и предыдущее сообщение бота
+                if message.chat.type == "private":
+                    try:
+                        await message.delete()
+                        if prev_bot_msg_id:
+                            await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+                    except Exception as e:
+                        print(f"Ошибка при удалении: {e}")
+
                 await message.answer(error_text, reply_markup=kb)
                 await state.clear()
                 return
@@ -304,7 +319,20 @@ async def add_debt_person_simple(message: Message, state: FSMContext):
         if not validate_person_name(person_name):
             try:
                 error_text = await tr(user_id, 'person_name_invalid')
-                await message.answer(error_text)
+
+                # Удаляем только сообщение пользователя и предыдущее сообщение бота
+                if message.chat.type == "private":
+                    try:
+                        await message.delete()
+                        if prev_bot_msg_id:
+                            await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+                    except Exception as e:
+                        print(f"Ошибка при удалении: {e}")
+
+                sent_message = await message.answer(error_text)
+
+                # Сохраняем ID нового сообщения с ошибкой
+                await state.update_data(bot_message_id=sent_message.message_id)
                 return
             except Exception as inner_e:
                 print(f"❌ Ошибка при отправке сообщения об ошибке валидации: {inner_e}")
@@ -314,9 +342,21 @@ async def add_debt_person_simple(message: Message, state: FSMContext):
         await state.update_data(person=person_name)
 
         try:
+            # Удаляем сообщение пользователя и предыдущее сообщение бота
+            if message.chat.type == "private":
+                try:
+                    await message.delete()
+                    if prev_bot_msg_id:
+                        await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+                except Exception as e:
+                    print(f"Ошибка при удалении: {e}")
+
             currency_text = await tr(user_id, 'currency')
             kb = await currency_keyboard(user_id)
-            await message.answer(currency_text, reply_markup=kb)
+            sent_message = await message.answer(currency_text, reply_markup=kb)
+
+            # Сохраняем ID нового сообщения бота
+            await state.update_data(bot_message_id=sent_message.message_id)
             await state.set_state(AddDebt.currency)
         except Exception as inner_e:
             print(f"❌ Ошибка при переходе к выбору валюты: {inner_e}")
@@ -354,7 +394,10 @@ async def add_debt_currency_simple(call: CallbackQuery, state: FSMContext):
         user_id = call.from_user.id
 
         amount_text = await tr(user_id, 'amount')
-        await call.message.edit_text(amount_text)
+        sent_message = await call.message.edit_text(amount_text)
+
+        # Сохраняем ID нового сообщения бота
+        await state.update_data(bot_message_id=sent_message.message_id)
         await state.set_state(AddDebt.amount)
 
     except Exception as e:
@@ -370,13 +413,28 @@ async def add_debt_currency_simple(call: CallbackQuery, state: FSMContext):
 async def add_debt_amount_simple(message: Message, state: FSMContext):
     """Получение суммы долга"""
     user_id = message.from_user.id
+    data = await state.get_data()
+    prev_bot_msg_id = data.get("bot_message_id")
 
     try:
         # Проверяем тип сообщения
         if not is_text_message(message):
             try:
                 error_text = await tr(user_id, 'amount_wrong')
-                await message.answer(error_text)
+
+                # Удаляем только сообщение пользователя и предыдущее сообщение бота
+                if message.chat.type == "private":
+                    try:
+                        await message.delete()
+                        if prev_bot_msg_id:
+                            await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+                    except Exception as e:
+                        print(f"Ошибка при удалении: {e}")
+
+                sent_message = await message.answer(error_text)
+
+                # Сохраняем ID нового сообщения с ошибкой
+                await state.update_data(bot_message_id=sent_message.message_id)
                 return
             except Exception as inner_e:
                 print(f"❌ Ошибка при отправке сообщения об ошибке типа: {inner_e}")
@@ -389,7 +447,20 @@ async def add_debt_amount_simple(message: Message, state: FSMContext):
         if not amount_text.isdigit():
             try:
                 error_text = await tr(user_id, 'amount_wrong')
-                await message.answer(error_text)
+
+                # Удаляем только сообщение пользователя и предыдущее сообщение бота
+                if message.chat.type == "private":
+                    try:
+                        await message.delete()
+                        if prev_bot_msg_id:
+                            await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+                    except Exception as e:
+                        print(f"Ошибка при удалении: {e}")
+
+                sent_message = await message.answer(error_text)
+
+                # Сохраняем ID нового сообщения с ошибкой
+                await state.update_data(bot_message_id=sent_message.message_id)
                 return
             except Exception as inner_e:
                 print(f"❌ Ошибка при отправке сообщения об ошибке числа: {inner_e}")
@@ -400,7 +471,20 @@ async def add_debt_amount_simple(message: Message, state: FSMContext):
         if amount <= 0 or amount > 999999999:
             try:
                 error_text = await tr(user_id, 'amount_range_error')
-                await message.answer(error_text)
+
+                # Удаляем только сообщение пользователя и предыдущее сообщение бота
+                if message.chat.type == "private":
+                    try:
+                        await message.delete()
+                        if prev_bot_msg_id:
+                            await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+                    except Exception as e:
+                        print(f"Ошибка при удалении: {e}")
+
+                sent_message = await message.answer(error_text)
+
+                # Сохраняем ID нового сообщения с ошибкой
+                await state.update_data(bot_message_id=sent_message.message_id)
                 return
             except Exception as inner_e:
                 print(f"❌ Ошибка при отправке сообщения об ошибке диапазона: {inner_e}")
@@ -410,9 +494,21 @@ async def add_debt_amount_simple(message: Message, state: FSMContext):
         await state.update_data(amount=amount)
 
         try:
+            # Удаляем сообщение пользователя и предыдущее сообщение бота
+            if message.chat.type == "private":
+                try:
+                    await message.delete()
+                    if prev_bot_msg_id:
+                        await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+                except Exception as e:
+                    print(f"Ошибка при удалении: {e}")
+
             suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
             due_text = await tr(user_id, 'due', suggest_date=suggest_date)
-            await message.answer(due_text)
+            sent_message = await message.answer(due_text)
+
+            # Сохраняем ID нового сообщения бота
+            await state.update_data(bot_message_id=sent_message.message_id)
             await state.set_state(AddDebt.due)
         except Exception as inner_e:
             print(f"❌ Ошибка при переходе к дате: {inner_e}")
@@ -439,6 +535,8 @@ async def add_debt_amount_simple(message: Message, state: FSMContext):
 async def add_debt_due_simple(message: Message, state: FSMContext):
     """Получение срока возврата"""
     user_id = message.from_user.id
+    data = await state.get_data()
+    prev_bot_msg_id = data.get("bot_message_id")
 
     try:
         # Проверяем тип сообщения
@@ -446,7 +544,20 @@ async def add_debt_due_simple(message: Message, state: FSMContext):
             try:
                 suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
                 error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
-                await message.answer(error_text)
+
+                # Удаляем только сообщение пользователя и предыдущее сообщение бота
+                if message.chat.type == "private":
+                    try:
+                        await message.delete()
+                        if prev_bot_msg_id:
+                            await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+                    except Exception as e:
+                        print(f"Ошибка при удалении: {e}")
+
+                sent_message = await message.answer(error_text)
+
+                # Сохраняем ID нового сообщения с ошибкой
+                await state.update_data(bot_message_id=sent_message.message_id)
                 return
             except Exception as inner_e:
                 print(f"❌ Ошибка при отправке сообщения об ошибке типа даты: {inner_e}")
@@ -460,7 +571,21 @@ async def add_debt_due_simple(message: Message, state: FSMContext):
             due_date = datetime.strptime(due_text, '%Y-%m-%d')
             if due_date.date() < datetime.now().date():
                 try:
-                    await message.answer(await tr(user_id, 'date_in_past'))
+                    error_text = await tr(user_id, 'date_in_past')
+
+                    # Удаляем только сообщение пользователя и предыдущее сообщение бота
+                    if message.chat.type == "private":
+                        try:
+                            await message.delete()
+                            if prev_bot_msg_id:
+                                await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+                        except Exception as e:
+                            print(f"Ошибка при удалении: {e}")
+
+                    sent_message = await message.answer(error_text)
+
+                    # Сохраняем ID нового сообщения с ошибкой
+                    await state.update_data(bot_message_id=sent_message.message_id)
                     return
                 except Exception as inner_e:
                     print(f"❌ Ошибка при отправке сообщения о прошлой дате: {inner_e}")
@@ -470,7 +595,20 @@ async def add_debt_due_simple(message: Message, state: FSMContext):
             try:
                 suggest_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
                 error_text = await tr(user_id, 'due_wrong', suggest_date=suggest_date)
-                await message.answer(error_text)
+
+                # Удаляем только сообщение пользователя и предыдущее сообщение бота
+                if message.chat.type == "private":
+                    try:
+                        await message.delete()
+                        if prev_bot_msg_id:
+                            await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+                    except Exception as e:
+                        print(f"Ошибка при удалении: {e}")
+
+                sent_message = await message.answer(error_text)
+
+                # Сохраняем ID нового сообщения с ошибкой
+                await state.update_data(bot_message_id=sent_message.message_id)
                 return
             except Exception as inner_e:
                 print(f"❌ Ошибка при отправке сообщения об ошибке формата даты: {inner_e}")
@@ -480,9 +618,21 @@ async def add_debt_due_simple(message: Message, state: FSMContext):
         await state.update_data(due=due_text)
 
         try:
+            # Удаляем сообщение пользователя и предыдущее сообщение бота
+            if message.chat.type == "private":
+                try:
+                    await message.delete()
+                    if prev_bot_msg_id:
+                        await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+                except Exception as e:
+                    print(f"Ошибка при удалении: {e}")
+
             direction_text = await tr(user_id, 'direction')
             kb = await direction_keyboard(user_id)
-            await message.answer(direction_text, reply_markup=kb)
+            sent_message = await message.answer(direction_text, reply_markup=kb)
+
+            # Сохраняем ID нового сообщения бота
+            await state.update_data(bot_message_id=sent_message.message_id)
             await state.set_state(AddDebt.direction)
         except Exception as inner_e:
             print(f"❌ Ошибка при переходе к направлению: {inner_e}")
@@ -519,7 +669,10 @@ async def add_debt_direction_simple(call: CallbackQuery, state: FSMContext):
 
         comment_text = await tr(user_id, 'comment')
         kb = await skip_comment_keyboard(user_id)
-        await call.message.edit_text(comment_text, reply_markup=kb)
+        sent_message = await call.message.edit_text(comment_text, reply_markup=kb)
+
+        # Сохраняем ID нового сообщения бота
+        await state.update_data(bot_message_id=sent_message.message_id)
         await state.set_state(AddDebt.comment)
 
     except Exception as e:
@@ -535,6 +688,8 @@ async def add_debt_direction_simple(call: CallbackQuery, state: FSMContext):
 async def add_debt_comment_simple(message: Message, state: FSMContext):
     """Получение комментария"""
     user_id = message.from_user.id
+    data = await state.get_data()
+    prev_bot_msg_id = data.get("bot_message_id")
 
     try:
         # Проверяем тип сообщения
@@ -545,9 +700,33 @@ async def add_debt_comment_simple(message: Message, state: FSMContext):
             # Если не текст, используем пустой комментарий
             try:
                 warning_text = await tr(user_id, 'comment_text_only')
-                await message.answer(warning_text)
+
+                # Удаляем только сообщение пользователя и предыдущее сообщение бота
+                if message.chat.type == "private":
+                    try:
+                        await message.delete()
+                        if prev_bot_msg_id:
+                            await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+                    except Exception as e:
+                        print(f"Ошибка при удалении: {e}")
+
+                sent_message = await message.answer(warning_text)
+
+                # Сохраняем ID нового сообщения с предупреждением
+                await state.update_data(bot_message_id=sent_message.message_id)
+                return
+
             except Exception as inner_e:
                 print(f"❌ Ошибка при отправке предупреждения о комментарии: {inner_e}")
+
+        # Удаляем сообщение пользователя и предыдущее сообщение бота перед завершением
+        if message.chat.type == "private":
+            try:
+                await message.delete()
+                if prev_bot_msg_id:
+                    await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+            except Exception as e:
+                print(f"Ошибка при удалении: {e}")
 
         await finish_add_debt(user_id, state, comment, message)
 
@@ -579,6 +758,19 @@ async def skip_comment_simple(call: CallbackQuery, state: FSMContext):
 async def finish_add_debt(user_id: int, state: FSMContext, comment: str, message: Message = None, call: CallbackQuery = None):
     """Завершение добавления долга"""
     try:
+        today_count = await crud.count_user_debts_today(user_id)
+        if today_count >= 50:
+            error_text = await tr(user_id, 'daily_limit_reached')  # добавь этот ключ в переводы
+            kb = await main_menu(user_id)
+
+            if message:
+                await message.answer(error_text, reply_markup=kb)
+            elif call:
+                await call.message.edit_text(error_text, reply_markup=kb)
+
+            await state.clear()
+            return
+
         data = await state.get_data()
 
         # Проверяем наличие всех данных

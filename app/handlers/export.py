@@ -1,8 +1,10 @@
-# app/handlers/export.py
 from aiogram import types, Router, F
-from aiogram.types import BufferedInputFile, InputMediaDocument, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, \
+    CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.connection import get_db
+from app.keyboards import main_menu
+from app.utils import safe_edit_message
 from app.utils.export_utils import export_user_debts_to_excel, get_export_filename
 from app.keyboards.callbacks import CallbackData
 from app.keyboards.texts import tr
@@ -10,6 +12,22 @@ import logging
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+@router.callback_query(F.data == CallbackData.BACK_MAIN_EXPORT)
+async def back_main_export(call: CallbackQuery):
+    await call.answer()
+    text = await tr(call.from_user.id, 'choose_action')
+    markup = await main_menu(call.from_user.id)
+    await safe_edit_message(call, text, markup)
+    try:
+        # просто удаляем сообщение с меню
+        await call.message.delete()
+    except Exception as e:
+        print(f"❌ Ошибка в back_main: {e}")
+        try:
+            await call.answer("❌ Ошибка при удалении сообщения", show_alert=True)
+        except:
+            pass
 
 @router.callback_query(F.data == CallbackData.EXPORT_EXCEL)
 async def export_debts_callback(callback_query: types.CallbackQuery):
@@ -52,16 +70,21 @@ async def export_debts_callback(callback_query: types.CallbackQuery):
 
         back_main_kb = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text=back_main_text, callback_data="back_main")]
+                [InlineKeyboardButton(text=back_main_text, callback_data=CallbackData.BACK_MAIN_EXPORT)]
             ]
         )
 
-        # 4. Заменяем текущее сообщение на файл с кнопкой "Главное меню"
-        await callback_query.message.edit_media(
-            media=InputMediaDocument(
-                media=file,
-                caption=caption
-            ),
+        # 4. Удаляем старое сообщение с индикатором загрузки
+        if callback_query.message.chat.type == "private":
+            try:
+                await callback_query.message.delete()
+            except Exception as e:
+                logger.warning(f"Не удалось удалить сообщение с индикатором: {e}")
+
+        # 5. Отправляем новое сообщение с файлом
+        await callback_query.message.answer_document(
+            document=file,
+            caption=caption,
             reply_markup=back_main_kb
         )
 
@@ -81,7 +104,7 @@ async def export_debts_callback(callback_query: types.CallbackQuery):
 
         back_main_kb = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text=back_main_text, callback_data="back_main")]
+                [InlineKeyboardButton(text=back_main_text, callback_data=CallbackData.BACK_MAIN_EXPORT)]
             ]
         )
 

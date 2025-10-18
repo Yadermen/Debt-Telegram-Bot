@@ -512,8 +512,7 @@ def create_admin_app():
     admin.add_view(UserAdmin(User, db.session, name='Пользователи', category='Управление'))
     admin.add_view(DebtAdmin(Debt, db.session, name='Долги', category='Управление'))
     admin.add_view(ScheduledMessageAdmin(ScheduledMessage, db.session, name='Сообщения', category='Управление'))
-    admin.add_view(ReminderAdmin(Reminder, db.session, name='Напоминания', category='Управление'))
-    admin.add_view(UserStatsView(name="Статистика по пользователю", endpoint="user_stats"))
+    admin.add_view(UserStatsView(name="", endpoint="user_stats"))
 
     # Кастомный шаблон для главной страницы
     CUSTOM_INDEX_TEMPLATE = '''

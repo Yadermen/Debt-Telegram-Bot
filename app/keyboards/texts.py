@@ -29,6 +29,8 @@ LANGS = {
         'cancelled': 'Действие отменено.',
         'back': '⬅️ Назад',
         'to_menu': 'В меню',
+        'daily_limit_reached': '⚠️ Вы достигли дневного лимита в 50 долгов. Попробуйте завтра.',
+        "daily_limit_partial": "⚠️ Сохранено {saved} из {total} долгов. Достигнут дневной лимит.",
         'to_list': '⬅️ К списку',
         'edit': '✏️ Изменить',
         'delete': '❌ Удалить',
@@ -256,6 +258,8 @@ LANGS = {
             "Ma'lumotlarni aniqlab bo'lmadi. Iltimos, soddaroq yozing:\n"
             "men Ivan ismli odamga YYYY-MM-DD sanasigacha 100 USD qarzdorman"
         ),
+        "daily_limit_reached":"⚠️ Siz kunlik 50 ta qarz limitiga yetdingiz. Ertaga urinib ko'ring.",
+        "daily_limit_partial":"⚠️ {total} dan {saved} ta qarz saqlandi. Kunlik limitga yetildi.",
         "my_debts": "📋 Qarzlarim",
         "clear_all": "🧹 Hammasini o'chirish",
         "reminders_menu": "🔔 Eslatmalar",

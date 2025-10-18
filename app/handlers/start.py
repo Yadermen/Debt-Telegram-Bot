@@ -38,7 +38,13 @@ async def language_menu_start(user_id: int) -> InlineKeyboardMarkup:
 async def cmd_start(message: Message, state: FSMContext):
     """Обработчик команды /start"""
     user_id = message.from_user.id
-
+    if message.chat.type == "private":
+        try:
+            # Удаляем сообщение пользователя
+            await message.delete()
+            # Удаляем сообщение бота
+        except Exception as e:
+            print(f"Ошибка при удалении: {e}")
     try:
         # Получаем текущее состояние пользователя
         current_state = await state.get_state()
