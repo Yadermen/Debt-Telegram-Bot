@@ -14,13 +14,13 @@ from app.database.crud import (
     delete_currency_reminders, get_reminder_by_id, set_user_currency_time, get_user_currency_time
 )
 from app.database.models import Reminder
+from app.keyboards import menu_button, main_menu
 from app.keyboards.texts import tr
 from app.keyboards.callbacks import CallbackData, DynamicCallbacks
 from aiogram.filters import Command
 import pytz
 from app.config import ADMIN_IDS  # Импортируй свой список админов
-
-
+from app.utils import safe_edit_message
 
 router = Router()
 
@@ -83,6 +83,26 @@ async def reminders_main_kb(user_id: int) -> InlineKeyboardMarkup:
         ]
     )
 
+@router.callback_query(F.data == CallbackData.BACK_MAIN_REMINDER)
+async def back_main_reminder(call: CallbackQuery, state: FSMContext):
+    """Возврат в главное меню"""
+    # убираем "часики"
+    await call.answer()
+
+    try:
+        await state.clear()
+        text = await tr(call.from_user.id, 'choose_action')
+        markup = await main_menu(call.from_user.id)
+
+        # правильная отправка сообщения
+        await call.message.answer(text=text, reply_markup=markup)
+
+    except Exception as e:
+        print(f"❌ Ошибка в back_main: {e}")
+        try:
+            await call.answer("❌ Ошибка перехода в меню", show_alert=True)
+        except:
+            pass
 
 @router.callback_query(F.data == CallbackData.REMINDERS_MENU)
 async def open_reminders_menu(callback: CallbackQuery):
@@ -373,6 +393,25 @@ async def start_add_reminder(callback: CallbackQuery, state: FSMContext):
     await state.set_state(ReminderForm.text)
     await callback.answer()
 
+@router.callback_query(F.data == CallbackData.BACK_MAIN_REMINDER)
+async def back_main_reminder(call: CallbackQuery, state: FSMContext):
+        await call.answer(text="fff")
+        """Возврат в главное меню"""
+        # 1. Сразу убираем "часики"
+        await call.answer()
+
+        try:
+            await state.clear()
+            text = await tr(call.from_user.id, 'choose_action')
+            markup = await main_menu(call.from_user.id)
+            await call.send_message(text=text, reply_markup=markup)
+        except Exception as e:
+            print(f"❌ Ошибка в back_main: {e}")
+            try:
+                await call.answer("❌ Ошибка перехода в меню", show_alert=True)
+            except:
+                pass
+
 
 @router.message(ReminderForm.text)
 async def process_text(message: types.Message, state: FSMContext):
@@ -570,6 +609,7 @@ async def test_currency_notification(message: Message):
         print(f"❌ Ошибка теста: {e}")
 
 
+
 @router.message(Command("check_jobs"))
 async def check_jobs(message: Message):
     from app.utils.scheduler import scheduler
@@ -588,7 +628,6 @@ async def check_jobs(message: Message):
 async def check_reminders(bot):
     now = datetime.now().replace(second=0, microsecond=0)  # текущее время без секунд
     async with get_db() as session:
-        # достаём все напоминания, у которых время <= сейчас
         result = await session.execute(
             select(Reminder).where(Reminder.due <= now)
         )
@@ -596,9 +635,15 @@ async def check_reminders(bot):
 
         for r in reminders:
             try:
-                await bot.send_message(r.user_id, f"⏰ Напоминание: {r.text}")
+                kb = await menu_button(r.user_id)  # формируем клавиатуру
+                await bot.send_message(
+                    r.user_id,
+                    f"⏰ {r.text}",
+                    reply_markup=kb
+                )
                 await session.delete(r)  # удаляем, если одноразовое
             except Exception as e:
                 print(f"[ERROR] Не удалось отправить {r.id}: {e}")
 
         await session.commit()
+

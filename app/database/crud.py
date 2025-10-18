@@ -584,13 +584,16 @@ async def delete_reminder(reminder_id: int):
 
 
 # ✏️ Обновить напоминание
-async def update_reminder(session: AsyncSession, reminder_id: int, **kwargs):
-    await session.execute(
+async def update_reminder(session: AsyncSession, reminder_id: int, **kwargs) -> int:
+    result = await session.execute(
         update(Reminder)
         .where(Reminder.id == reminder_id)
         .values(**kwargs)
     )
     await session.commit()
+    return result.rowcount
+
+
 
 
 # Включить напоминания (ставим дефолтное время)
@@ -714,16 +717,22 @@ async def get_user_currency_time(session, user_id: int) -> str | None:
     if not user:
         return None
     return user.currency_notify_time
+
 async def get_due_reminders(now):
+    start = now.replace(second=0, microsecond=0)
+    end = start + timedelta(minutes=1)
+
     async with get_db() as session:
         result = await session.execute(
             select(Reminder).where(
-                Reminder.due <= now,
+                Reminder.due >= start,
+                Reminder.due < end,
                 Reminder.repeat == "none",
-                Reminder.is_active == True  # ← Добавьте эту проверку
+                Reminder.is_active.is_(True)
             )
         )
         reminders = result.scalars().all()
+        print(f"📋 Найдено {len(reminders)} одноразовых активных напоминаний")
         return [{
             'id': r.id,
             'user_id': r.user_id,

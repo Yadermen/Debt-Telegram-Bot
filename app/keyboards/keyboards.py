@@ -372,7 +372,6 @@ async def skip_comment_keyboard(user_id: int) -> InlineKeyboardMarkup:
 
 
 async def menu_button(user_id: int) -> InlineKeyboardMarkup:
-    """Кнопка возврата в главное меню"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
@@ -381,7 +380,15 @@ async def menu_button(user_id: int) -> InlineKeyboardMarkup:
             )
         ]
     ])
-
+async def back_menu_reminder_button(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=await tr(user_id, 'to_menu'),
+                callback_data=CallbackData.BACK_MAIN_REMINDER
+            )
+        ]
+    ])
 
 async def currency_edit_keyboard(debt_id: int, user_id: int) -> InlineKeyboardMarkup:
     """Клавиатура для редактирования валюты конкретного долга"""

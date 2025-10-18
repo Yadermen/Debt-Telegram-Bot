@@ -1,6 +1,7 @@
 """
 Планировщик напоминаний
 """
+from aiogram.types import InlineKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, timedelta
 import asyncio
@@ -14,7 +15,8 @@ from app.database.crud import (
     update_reminder_due,
     delete_reminder
 )
-from app.keyboards import main_menu
+from app.keyboards import main_menu, menu_button
+from app.keyboards.keyboards import back_menu_reminder_button
 
 
 class ReminderScheduler:
@@ -166,7 +168,7 @@ class ReminderScheduler:
             message_text = '\n\n'.join(message_lines)
 
             print(f"📤 Отправка сообщения пользователю {user_id}")
-            await self.bot.send_message(user_id, message_text)
+            await self.bot.send_message(user_id, message_text, reply_markup=await back_menu_reminder_button(user_id))
             print(f"✅ Ежедневное напоминание отправлено пользователю {user_id}")
 
         except Exception as e:
@@ -221,9 +223,9 @@ class ReminderScheduler:
 
     async def schedule_all_reminders(self):
         """Перепланировать все напоминания для всех пользователей"""
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("🔄 ЗАПУСК: schedule_all_reminders")
-        print("="*70)
+        print("=" * 70)
 
         try:
             from app.database import get_all_users
@@ -234,7 +236,12 @@ class ReminderScheduler:
 
             removed_count = 0
             for job in existing_jobs:
-                if job.id.startswith(('user_reminder_', 'user_currency_', 'general_reminders_', 'repeating_reminders')):
+                if job.id.startswith((
+                        'user_reminder_',
+                        'user_currency_',
+                        'general_reminders_',
+                        'repeating_reminders'
+                )):
                     print(f"  🗑️ Удаляем задачу: {job.id}")
                     job.remove()
                     removed_count += 1
@@ -248,66 +255,53 @@ class ReminderScheduler:
             debt_reminders_count = 0
             currency_reminders_count = 0
 
-            # Планируем индивидуальные напоминания
+            # Планируем индивидуальные задачи
             for user in users:
                 user_id = user['user_id']
 
-
                 # Напоминания о долгах
                 notify_time = user.get('notify_time')
-
-
                 if notify_time:
                     try:
                         hour, minute = map(int, notify_time.split(':'))
-
                         self.scheduler.add_job(
                             self.send_daily_reminders,
                             'cron',
                             hour=hour,
                             minute=minute,
-                            timezone='Asia/Tashkent',  # ← И ТУТ
+                            timezone='Asia/Tashkent',
                             id=f'user_reminder_{user_id}',
                             args=[user_id],
                             replace_existing=True
                         )
                         debt_reminders_count += 1
-
-
                     except Exception as e:
                         print(f"  ❌ Ошибка планирования напоминаний о долгах: {e}")
                         traceback.print_exc()
 
                 # Валютные уведомления
                 currency_time = user.get('currency_notify_time')
-
-
                 if currency_time:
                     try:
                         hour, minute = map(int, currency_time.split(':'))
-                        print(f"  ⏰ Установка валютного уведомления на {hour:02d}:{minute:02d}")
-
                         self.scheduler.add_job(
                             self.send_currency_alerts,
                             'cron',
                             hour=hour,
                             minute=minute,
-                            timezone='Asia/Tashkent',  # ← ДОБАВЬ ЭТУ СТРОКУ
+                            timezone='Asia/Tashkent',
                             id=f'user_currency_{user_id}',
                             args=[user_id],
                             replace_existing=True
                         )
                         currency_reminders_count += 1
-                        print(f"  ✅ Валютное уведомление запланировано")
-
                     except Exception as e:
                         print(f"  ❌ Ошибка планирования валютных уведомлений: {e}")
                         traceback.print_exc()
 
-            # ГЛОБАЛЬНЫЕ задачи
+            # Глобальные задачи (только одна копия каждой!)
             print("\n🌐 Добавление глобальных задач:")
 
-            print("  ➕ Добавление general_reminders_global")
             self.scheduler.add_job(
                 self.send_general_reminders,
                 'interval',
@@ -316,8 +310,8 @@ class ReminderScheduler:
                 id='general_reminders_global',
                 replace_existing=True
             )
+            print("  ➕ Добавлена general_reminders_global")
 
-            print("  ➕ Добавление repeating_reminders_global")
             self.scheduler.add_job(
                 self.send_repeating_reminders,
                 'interval',
@@ -326,34 +320,25 @@ class ReminderScheduler:
                 id='repeating_reminders_global',
                 replace_existing=True
             )
-
-
+            print("  ➕ Добавлена repeating_reminders_global")
 
             # Итоговая статистика
             all_jobs = self.scheduler.get_jobs()
             print(f"\n📊 ИТОГОВАЯ СТАТИСТИКА:")
             print(f"   ✅ Напоминаний о долгах: {debt_reminders_count}")
             print(f"   ✅ Валютных уведомлений: {currency_reminders_count}")
-            print(f"   ✅ Глобальных задач: 3")
+            print(f"   ✅ Глобальных задач: 2")
             print(f"   📋 Всего активных задач: {len(all_jobs)}")
 
-            print(f"\n🔍 ВАЛЮТНЫЕ ЗАДАЧИ:")
-            for job in self.scheduler.get_jobs():
-                if 'currency' in job.id:
-                    print(f"   📌 {job.id}")
-                    print(f"      next_run: {job.next_run_time}")
-                    print(f"      trigger: {job.trigger}")
-                    print()
-
-
-
-
+            print(f"\n🔍 Список всех задач:")
+            for job in all_jobs:
+                print(f"   • {job.id} → next_run={job.next_run_time}")
 
         except Exception as e:
             print(f"❌ КРИТИЧЕСКАЯ ОШИБКА в schedule_all_reminders: {e}")
             traceback.print_exc()
         finally:
-            print("="*70 + "\n")
+            print("=" * 70 + "\n")
 
     async def send_broadcast_to_all_users(self, text: str, photo_id: str = None, admin_id: int = None):
         """Отправить рассылку всем пользователям"""
@@ -445,7 +430,7 @@ class ReminderScheduler:
 
                     text = f"⏰ {r['text']}\n🕒 {r['due']}"
                     print(f"   📤 Отправка сообщения пользователю {r['user_id']}")
-                    await self.bot.send_message(r['user_id'], text)
+                    await self.bot.send_message(r['user_id'], text, reply_markup= await back_menu_reminder_button(r['user_id']))
                     print(f"   ✅ Напоминание отправлено")
 
                 except Exception as e:
@@ -484,7 +469,7 @@ class ReminderScheduler:
             print(f"   Первые 200 символов: {message[:200]}")
 
             print(f"📤 Попытка отправки боту...")
-            result = await self.bot.send_message(user_id, message, reply_markup=await main_menu(user_id))
+            result = await self.bot.send_message(user_id, message, reply_markup=await back_menu_reminder_button(user_id))
             print(f"✅ Сообщение отправлено! Message ID: {result.message_id}")
 
         except Exception as e:
@@ -541,7 +526,7 @@ class ReminderScheduler:
 
                     text = f"⏰ {r['text']}"
                     print(f"   📤 Отправка сообщения пользователю {user_id}")
-                    await self.bot.send_message(user_id, text)
+                    await self.bot.send_message(user_id, text, reply_markup=await main_menu(user_id))
                     print(f"   ✅ Сообщение отправлено")
 
                     # Рассчитываем следующую дату
