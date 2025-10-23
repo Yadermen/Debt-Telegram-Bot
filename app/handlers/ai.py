@@ -36,7 +36,7 @@ async def cancel_kb(user_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(
                 text=await tr(user_id, 'cancel_btn'),
-                callback_data=CallbackData.BACK
+                callback_data=CallbackData.BACK_MAIN_REMINDER
             )]
         ]
     )

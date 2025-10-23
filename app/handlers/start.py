@@ -40,26 +40,20 @@ async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     if message.chat.type == "private":
         try:
-            # Удаляем сообщение пользователя
             await message.delete()
-            # Удаляем сообщение бота
         except Exception as e:
             print(f"Ошибка при удалении: {e}")
+
     try:
-        # Получаем текущее состояние пользователя
         current_state = await state.get_state()
 
-        # Если пользователь находится в процессе добавления/редактирования долга
         if current_state:
-            # Предупреждаем о прерывании процесса
             if isinstance(current_state, str) and (
                 current_state.startswith('AddDebt:') or
                 current_state.startswith('EditDebt:') or
                 current_state.startswith('SetNotifyTime:') or
                 current_state.startswith('AdminBroadcast:')
             ):
-
-                # Создаем клавиатуру с выбором
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(
                         text=await tr(user_id, 'continue_process'),
@@ -85,15 +79,16 @@ async def cmd_start(message: Message, state: FSMContext):
                 await message.answer(warning_text, reply_markup=kb)
                 return
 
-        # Очищаем состояние, если дошли сюда
         await state.clear()
 
-        # Проверяем, существует ли пользователь
         user = await get_user_by_id(user_id)
 
+        # ✅ ВАЖНО: определяем источник трафика (например /start reklama1)
+        args = message.text.split(maxsplit=1)
+        source = args[1] if len(args) > 1 else "organic"
+
         if not user:
-            # Новый пользователь — предлагаем выбрать язык
-            # Показываем приветствие на двух языках
+            # Новый пользователь — добавим source
             welcome_text = """
 🇷🇺 Добро пожаловать в QarzNazoratBot!
 Выберите язык / Tilni tanlang:
@@ -102,10 +97,18 @@ async def cmd_start(message: Message, state: FSMContext):
 Выберите язык / Tilni tanlang:
 """
             kb = await language_menu_start(user_id)
+
+            # 👇 создаём пользователя в БД с source
+            from ..database import async_session
+            from ..database.models import User
+            async with async_session() as session:
+                new_user = User(user_id=user_id, lang='ru', source=source)
+                session.add(new_user)
+                await session.commit()
+
             await message.answer(welcome_text, reply_markup=kb)
             return
 
-        # Существующий пользователь
         user_data = await get_user_data(user_id)
         welcome_text = await tr(user_id, 'welcome')
         kb = await main_menu(user_id)
@@ -113,7 +116,6 @@ async def cmd_start(message: Message, state: FSMContext):
 
     except Exception as e:
         print(f"❌ Ошибка в cmd_start для пользователя {user_id}: {e}")
-        # В случае ошибки показываем выбор языка
         welcome_text = """
 🇷🇺 Добро пожаловать в QarzNazoratBot!
 Выберите язык / Tilni tanlang:
@@ -123,7 +125,6 @@ async def cmd_start(message: Message, state: FSMContext):
 """
         kb = await language_menu_start(user_id)
         await message.answer(welcome_text, reply_markup=kb)
-
 
 @router.callback_query(lambda c: c.data == 'continue_current_process')
 async def continue_current_process(call: CallbackQuery, state: FSMContext):

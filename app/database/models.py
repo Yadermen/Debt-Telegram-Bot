@@ -15,6 +15,7 @@ class User(Base):
     is_active = Column(Boolean, default=True)  # Для soft delete
     created_at = Column(DateTime, default=datetime.utcnow)
     currency_notify_time = Column(String, nullable=True, default=None)
+    source = Column(String(100), nullable=True)
 
     # Relationships
     debts = relationship("Debt", back_populates="user")

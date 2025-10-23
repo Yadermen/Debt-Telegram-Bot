@@ -11,7 +11,7 @@ from wtforms.fields import SelectField, StringField
 from wtforms.validators import DataRequired
 from dotenv import load_dotenv
 from markupsafe import Markup
-from sqlalchemy import func
+from sqlalchemy import func, case
 
 from app.config import SYNC_DATABASE_URL
 from app.database.models import Base, User, Debt, ScheduledMessage, Reminder
@@ -421,7 +421,7 @@ class UserStatsView(BaseView):
         <div class="container mt-4">
             <h1 class="mb-3">📊 Статистика пользователя <span class="text-primary">{{ user.user_id }}</span></h1>
             <p class="text-muted">Язык интерфейса: <strong>{{ user.lang or "не указан" }}</strong></p>
-        
+
             <!-- Баланс -->
             <div class="card mt-4">
                 <div class="card-header bg-primary text-white">💰 Баланс по валютам</div>
@@ -448,7 +448,7 @@ class UserStatsView(BaseView):
                     {% endif %}
                 </div>
             </div>
-        
+
             <!-- Детальная статистика -->
             <div class="card mt-4">
                 <div class="card-header bg-info text-white">📊 Детальная статистика</div>
@@ -470,7 +470,7 @@ class UserStatsView(BaseView):
                     {% endif %}
                 </div>
             </div>
-        
+
             <!-- Итог -->
             <div class="mt-4">
                 <p><strong>Всего долгов:</strong> {{ total_debts }}</p>
@@ -489,6 +489,60 @@ class UserStatsView(BaseView):
             balance_by_currency=balance_by_currency,
             total_debts=len([d for d in user.debts if d.is_active and not d.closed])
         )
+
+
+class TrafficStatsView(BaseView):
+    @expose('/')
+    def index(self):
+        stats = (
+            db.session.query(
+                User.source,
+                func.count(User.user_id).label('total'),
+                func.sum(case((User.lang == 'ru', 1), else_=0)).label('ru'),
+                func.sum(case((User.lang == 'uz', 1), else_=0)).label('uz'),
+            )
+            .group_by(User.source)
+            .all()
+        )
+
+        template = """
+        <!doctype html>
+        <html lang="ru">
+        <head>
+            <meta charset="utf-8">
+            <title>Источники пользователей</title>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+        </head>
+        <body>
+        <div class="container mt-4">
+            <h1>📢 Источники пользователей</h1>
+            <table class="table table-bordered table-striped mt-4">
+                <thead class="thead-dark">
+                    <tr>
+                        <th>Источник</th>
+                        <th>Всего</th>
+                        <th>Русскоязычных</th>
+                        <th>Узбекоязычных</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in stats %}
+                    <tr>
+                        <td>{{ s.source or 'Не указан' }}</td>
+                        <td>{{ s.total }}</td>
+                        <td>{{ s.ru }}</td>
+                        <td>{{ s.uz }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <a href="{{ url_for('admin.index') }}" class="btn btn-secondary mt-3">⬅ Назад</a>
+        </div>
+        </body>
+        </html>
+        """
+        return render_template_string(template, stats=stats)
+
 
 def create_admin_app():
     app = Flask(__name__)
@@ -513,6 +567,7 @@ def create_admin_app():
     admin.add_view(DebtAdmin(Debt, db.session, name='Долги', category='Управление'))
     admin.add_view(ScheduledMessageAdmin(ScheduledMessage, db.session, name='Сообщения', category='Управление'))
     admin.add_view(UserStatsView(name="", endpoint="user_stats"))
+    admin.add_view(TrafficStatsView(name='📢 Источники', category='Статистика'))
 
     # Кастомный шаблон для главной страницы
     CUSTOM_INDEX_TEMPLATE = '''
@@ -522,42 +577,36 @@ def create_admin_app():
         <h1 class="mt-4">📊 Панель управления DebtBot</h1>
 
         <div class="row mt-4">
-            <div class="col-md-3">
-                <div class="card text-white bg-primary mb-3">
-                    <div class="card-header">👥 Пользователи</div>
-                    <div class="card-body">
-                        <h5 class="card-title">{{ total_users }}</h5>
-                        <p class="card-text">Всего пользователей в системе</p>
-                    </div>
-                </div>
+            <div class="col-md-4">
+        <div class="card text-white bg-primary mb-3">
+            <div class="card-header">👥 Пользователи</div>
+            <div class="card-body">
+                <h5 class="card-title">{{ total_users }}</h5>
+                <p class="card-text">Всего пользователей в системе</p>
             </div>
-            <div class="col-md-3">
-                <div class="card text-white bg-success mb-3">
-                    <div class="card-header">💳 Долги</div>
-                    <div class="card-body">
-                        <h5 class="card-title">{{ total_debts }}</h5>
-                        <p class="card-text">Активных долгов</p>
-                    </div>
-                </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card text-white bg-success mb-3">
+            <div class="card-header">💳 Долги</div>
+            <div class="card-body">
+                <h5 class="card-title">{{ total_debts }}</h5>
+                <p class="card-text">Активных долгов</p>
             </div>
-            <div class="col-md-3">
-                <div class="card text-white bg-info mb-3">
-                    <div class="card-header">📨 Сообщения</div>
-                    <div class="card-body">
-                        <h5 class="card-title">{{ total_scheduled }}</h5>
-                        <p class="card-text">Запланировано к отправке</p>
-                    </div>
-                </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card text-white bg-info mb-3">
+            <div class="card-header">📨 Сообщения</div>
+            <div class="card-body">
+                <h5 class="card-title">{{ total_scheduled }}</h5>
+                <p class="card-text">Запланировано к отправке</p>
             </div>
-            <div class="col-md-3">
-                <div class="card text-white bg-warning mb-3">
-                    <div class="card-header">⏰ Напоминания</div>
-                    <div class="card-body">
-                        <h5 class="card-title">{{ total_reminders }}</h5>
-                        <p class="card-text">Активных напоминаний</p>
-                    </div>
-                </div>
-            </div>
+        </div>
+    </div>
+</div>
         </div>
 
         <h2 class="mt-5">📈 Статистика по пользователям</h2>
