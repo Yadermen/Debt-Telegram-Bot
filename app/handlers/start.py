@@ -83,12 +83,12 @@ async def cmd_start(message: Message, state: FSMContext):
 
         user = await get_user_by_id(user_id)
 
-        # ✅ ВАЖНО: определяем источник трафика (например /start reklama1)
+        # ✅ Проверяем аргументы /start
         args = message.text.split(maxsplit=1)
-        source = args[1] if len(args) > 1 else "organic"
+        referral_code = args[1] if len(args) > 1 else None
 
         if not user:
-            # Новый пользователь — добавим source
+            # Новый пользователь
             welcome_text = """
 🇷🇺 Добро пожаловать в QarzNazoratBot!
 Выберите язык / Tilni tanlang:
@@ -98,17 +98,29 @@ async def cmd_start(message: Message, state: FSMContext):
 """
             kb = await language_menu_start(user_id)
 
-            # 👇 создаём пользователя в БД с source
             from ..database import async_session
             from ..database.models import User
+            from ..database.crud import get_referral_by_code
+
             async with async_session() as session:
-                new_user = User(user_id=user_id, lang='ru', source=source)
+                referral_id = None
+                if referral_code:
+                    referral = await get_referral_by_code(referral_code)
+                    if referral:
+                        referral_id = referral["id"]
+
+                new_user = User(
+                    user_id=user_id,
+                    lang='ru',
+                    referral_id=referral_id  # 👈 вместо source
+                )
                 session.add(new_user)
                 await session.commit()
 
             await message.answer(welcome_text, reply_markup=kb)
             return
 
+        # Старый пользователь
         user_data = await get_user_data(user_id)
         welcome_text = await tr(user_id, 'welcome')
         kb = await main_menu(user_id)

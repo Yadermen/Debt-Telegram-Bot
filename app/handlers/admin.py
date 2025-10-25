@@ -13,7 +13,9 @@ from app.database import (
     get_active_debts_count,
     save_scheduled_message,
 )
-from app.states import AdminBroadcast
+from app.database.crud import get_referrals, create_referral, deactivate_referral, get_referral_stats, \
+    get_referral_by_id, activate_referral
+from app.states import AdminBroadcast, AdminReferral
 from app.utils.broadcast import send_broadcast_to_all_users, send_scheduled_broadcast_with_stats
 
 # Пытаемся импортировать планировщик (если есть)
@@ -27,7 +29,34 @@ router = Router()
 ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(","))) if os.getenv("ADMIN_IDS") else []
 print(f"[admin.py] ✅ ADMIN_IDS: {ADMIN_IDS}")
 
+def kb_admin_referrals() -> InlineKeyboardMarkup:
+    """Главное меню рефералок"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 Список", callback_data="referrals_list")],
+        [InlineKeyboardButton(text="➕ Создать", callback_data="referral_create")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="referrals_stats")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")],
+    ])
 
+
+def kb_back_to_referrals() -> InlineKeyboardMarkup:
+    """Кнопка назад в меню рефералок"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_referrals")]
+    ])
+
+def kb_admin_main() -> InlineKeyboardMarkup:
+    """Главное меню админки"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="🎯 Реферальные ссылки", callback_data="admin_referrals")],
+        [InlineKeyboardButton(text="🌐 Веб‑админка", url="http://79.133.183.213:5000/admin")],
+    ])
+def kb_back_to_admin() -> InlineKeyboardMarkup:
+    """Кнопка возврата в главное меню админки"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 В админ‑панель", callback_data="admin_back")]
+    ])
 # ============================ Вспомогательные ============================
 
 def is_admin(user_id: int) -> bool:
@@ -132,12 +161,8 @@ async def admin_panel(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return await message.answer("Нет доступа")
     user_count, active_debts = await get_admin_stats_safely()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"👥 Пользователи ({user_count})", callback_data="admin_users")],
-        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
-    ])
-    await message.answer(f"📊 Пользователей: {user_count}\n📄 Активных долгов: {active_debts}", reply_markup=kb)
+
+    await message.answer(f"📊 Пользователей: {user_count}\n📄 Активных долгов: {active_debts}", reply_markup=kb_admin_main())
 
 
 @router.callback_query(F.data == "admin_back")
@@ -151,23 +176,18 @@ async def admin_back(call: CallbackQuery, state: FSMContext):
     await state.clear()
     user_count, active_debts = await get_admin_stats_safely()
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"👥 Пользователи ({user_count})", callback_data="admin_users")],
-        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
-    ])
 
     text = f"📊 Пользователей: {user_count}\n📄 Активных долгов: {active_debts}"
 
     # Безопасно: если текущее сообщение текстовое — редактируем, иначе шлём новое
     try:
         if call.message.text:
-            await call.message.edit_text(text, reply_markup=kb)
+            await call.message.edit_text(text, reply_markup=kb_admin_main())
         else:
-            await call.message.answer(text, reply_markup=kb)
+            await call.message.answer(text, reply_markup=kb_admin_main())
     except Exception as e:
         print(f"[admin_back] edit_text error: {e}")
-        await call.message.answer(text, reply_markup=kb)
+        await call.message.answer(text, reply_markup=kb_admin_main())
 
 
 
@@ -211,7 +231,7 @@ async def admin_stats(call: CallbackQuery):
         call,
         f"📊 Пользователей: {user_count}\n📄 Активных долгов: {active_debts}"
     )
-    await call.message.answer("Выбериfте действие:", reply_markup=kb)
+    await call.message.answer("Выбериfте действие:", reply_markup=kb_back_to_referrals())
 
 
 # ============================ Создание рассылки: текст ============================
@@ -604,3 +624,230 @@ async def set_schedule_time(message: Message, state: FSMContext):
         await message.answer("❌ Ошибка при планировании рассылки")
         await state.clear()
         print("[set_schedule_time] state очищен после ошибки")
+
+
+@router.callback_query(F.data == "admin_referrals")
+async def admin_referrals(call: CallbackQuery, state: FSMContext):
+    print(f"[admin_referrals] от {call.from_user.id}")
+    await call.answer()
+    if not is_admin(call.from_user.id):
+        return
+
+    # Удаляем сообщение, по которому кликнули
+    try:
+        await call.message.delete()
+    except Exception as e:
+        print(f"[admin_referrals] ошибка при удалении сообщения: {e}")
+
+
+    await call.message.answer("🎯 Управление реферальными ссылками", reply_markup=kb_admin_referrals())
+
+
+@router.callback_query(F.data == "referrals_list")
+async def referrals_list(call: CallbackQuery):
+    await call.answer()
+    referrals = await get_referrals(active_only=False)
+    if not referrals:
+        return await call.message.edit_text(
+            "❌ Рефералок нет",
+            reply_markup=kb_back_to_referrals()
+        )
+
+    # Формируем список кнопок
+    rows = []
+    for r in referrals:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{'✅' if r['is_active'] else '❌'} {r['code']}",
+                callback_data=f"referral_view_{r['id']}"
+            )
+        ])
+    # Добавляем кнопку "Назад"
+    rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_referrals")])
+
+    await call.message.edit_text(
+        "📋 Выберите рефералку:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+    )
+
+
+
+@router.callback_query(F.data == "referral_create")
+async def referral_create(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await state.set_state(AdminReferral.waiting_for_code)
+    await safe_edit_or_send(call, "✏️ Введите код для новой рефералки (например: promo2025)")
+
+
+@router.message(AdminReferral.waiting_for_code)
+async def referral_set_code(message: Message, state: FSMContext):
+    code = (message.text or "").strip()
+    if not code:
+        await message.answer("❌ Код не может быть пустым. Введите снова:")
+        return
+    await state.update_data(referral_code=code)
+    await state.set_state(AdminReferral.waiting_for_description)
+    await message.answer("📝 Введите описание (или отправьте '-' чтобы оставить пустым):")
+
+
+@router.message(AdminReferral.waiting_for_description)
+async def referral_set_description(message: Message, state: FSMContext):
+    desc = (message.text or "").strip()
+    if desc == "-":
+        desc = None
+    data = await state.get_data()
+    code = data.get("referral_code")
+
+
+
+    try:
+        referral = await create_referral(code, desc)
+        if referral:
+            await message.answer(
+                f"✅ Рефералка создана!\n\n"
+                f"Код: {referral['code']}\n"
+                f"Описание: {referral['description'] or '-'}\n"
+                f"Статус: {'Активна' if referral['is_active'] else 'Неактивна'}",
+                reply_markup=kb_back_to_referrals()
+            )
+        else:
+            await message.answer("❌ Ошибка при создании рефералки", reply_markup=kb_back_to_referrals())
+    except Exception as e:
+        log_exc("[referral_set_description] ошибка создания", e)
+        await message.answer("❌ Ошибка при сохранении рефералки", reply_markup=kb_back_to_referrals())
+
+    await state.clear()
+
+
+@router.callback_query(F.data == "referrals_list")
+async def referrals_list(call: CallbackQuery):
+    await call.answer()
+    referrals = await get_referrals(active_only=False)
+    if not referrals:
+        return await call.message.edit_text(
+            "❌ Рефералок нет",
+            reply_markup=kb_back_to_referrals()
+        )
+
+    rows = []
+    for r in referrals:
+        # теперь каждая кнопка ведёт в карточку конкретной рефералки
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{'✅' if r['is_active'] else '❌'} {r['code']}",
+                callback_data=f"referral_view:{r['id']}"
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_referrals")])
+
+    await call.message.edit_text(
+        "📋 Выберите рефералку:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+    )
+
+
+
+
+
+
+
+
+@router.callback_query(F.data.startswith("referral_stats_"))
+async def referral_stats(call: CallbackQuery):
+    await call.answer()
+    rid = int(call.data.replace("referral_stats_", ""))
+    stats = await get_referral_stats(rid)
+    if not stats:
+        return await call.message.edit_text("❌ Нет статистики", reply_markup=kb_back_to_referrals())
+
+    text = (
+        f"📊 Статистика по рефералке\n\n"
+        f"Пользователей: {stats['users_count']}\n"
+        f"Активных: {stats['active_users']}\n"
+        f"Последний: {stats['last_joined'] or '-'}"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data=f"referral_view_{rid}")]
+    ])
+
+    await call.message.edit_text(text, reply_markup=kb)
+
+
+
+
+
+async def render_referral_view(call: CallbackQuery, rid: int):
+    referral = await get_referral_by_id(rid)
+    if not referral:
+        return await call.message.edit_text("❌ Рефералка не найдена", reply_markup=kb_back_to_referrals())
+
+    stats = await get_referral_stats(rid)
+
+    text = (
+        f"🎯 Рефералка\n\n"
+        f"Код: {referral['code']}\n"
+        f"Описание: {referral['description'] or '-'}\n"
+        f"Статус: {'✅ Активна' if referral['is_active'] else '❌ Неактивна'}\n"
+        f"📊 Пользователей: {stats['users_count']}"
+    )
+
+    action_button = (
+        InlineKeyboardButton(text="🗑 Деактивировать", callback_data=f"referral_deactivate_{rid}")
+        if referral["is_active"]
+        else InlineKeyboardButton(text="✅ Активировать", callback_data=f"referral_activate_{rid}")
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [action_button],
+        [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="referrals_list")],
+    ])
+
+    await call.message.edit_text(text, reply_markup=kb)
+
+
+# хендлер для открытия карточки
+@router.callback_query(F.data.startswith("referral_view_"))
+async def referral_view(call: CallbackQuery):
+    rid = int(call.data.split("_")[2])
+    await render_referral_view(call, rid)
+
+
+# деактивация
+@router.callback_query(F.data.startswith("referral_deactivate_"))
+async def referral_deactivate(call: CallbackQuery):
+    rid = int(call.data.split("_")[2])
+    ok = await deactivate_referral(rid)
+    await call.answer("✅ Деактивирована" if ok else "❌ Ошибка", show_alert=not ok)
+    await render_referral_view(call, rid)
+
+
+# активация
+@router.callback_query(F.data.startswith("referral_activate_"))
+async def referral_activate(call: CallbackQuery):
+    rid = int(call.data.split("_")[2])
+    ok = await activate_referral(rid)
+    await call.answer("✅ Активирована" if ok else "❌ Ошибка", show_alert=not ok)
+    await render_referral_view(call, rid)
+
+
+
+
+
+@router.callback_query(F.data == "referrals_stats")
+async def referrals_stats(call: CallbackQuery):
+    await call.answer()
+    referrals = await get_referrals(active_only=False)
+    if not referrals:
+        return await call.message.edit_text("❌ Рефералок нет", reply_markup=kb_back_to_referrals())
+
+    text = "📊 Статистика по рефералкам:\n\n"
+    for r in referrals[:10]:
+        stats = await get_referral_stats(r["id"])
+        text += f"Код: {r['code']} — Пользователей: {stats['users_count']}\n"
+    if len(referrals) > 10:
+        text += f"\n... и ещё {len(referrals)-10}"
+
+    await call.message.edit_text(text, reply_markup=kb_back_to_referrals())
+
+

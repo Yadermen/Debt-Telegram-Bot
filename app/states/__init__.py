@@ -41,5 +41,17 @@ class EditReminder(StatesGroup):
     """Состояния для редактирования напоминания"""
     edit_value = State()
 
+class AdminReferral(StatesGroup):
+    """Состояния для управления рефералками"""
+    waiting_for_code = State()         # ввод кода (например promo2025)
+    waiting_for_description = State()
 
-__all__ = ['AddDebt', 'EditDebt', 'AdminBroadcast', 'SetNotifyTime', 'AddReminder', 'EditReminder']
+__all__ = [
+    'AddDebt',
+    'EditDebt',
+    'AdminBroadcast',
+    'SetNotifyTime',
+    'AddReminder',
+    'EditReminder',
+    'AdminReferral'
+]

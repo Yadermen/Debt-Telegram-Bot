@@ -849,3 +849,133 @@ async def count_user_debts_today(user_id: int) -> int:
             )
         )
         return result.scalar() or 0
+
+from datetime import datetime
+from sqlalchemy import select, func
+from app.database.models import Referral, User
+from app.database.connection import get_db
+
+
+# Создать новую рефералку
+async def create_referral(code: str, description: str | None = None) -> dict | None:
+    async with get_db() as session:
+        try:
+            referral = Referral(
+                code=code,
+                description=description,
+                created_at=datetime.utcnow(),
+                is_active=True
+            )
+            session.add(referral)
+            await session.commit()
+            await session.refresh(referral)
+            return {
+                "id": referral.id,
+                "code": referral.code,
+                "description": referral.description,
+                "is_active": referral.is_active,
+                "created_at": referral.created_at
+            }
+        except Exception as e:
+            print(f"❌ Ошибка при создании рефералки: {e}")
+            await session.rollback()
+            return None
+
+
+# Найти рефералку по коду
+async def get_referral_by_code(code: str) -> dict | None:
+    async with get_db() as session:
+        result = await session.execute(
+            select(Referral).where(
+                Referral.code == code,
+                Referral.is_active.is_(True)
+            )
+        )
+        referral = result.scalar_one_or_none()
+        if referral:
+            return {
+                "id": referral.id,
+                "code": referral.code,
+                "description": referral.description,
+                "is_active": referral.is_active,
+                "created_at": referral.created_at
+            }
+        return None
+
+
+# Получить список всех рефералок
+async def get_referrals(active_only: bool = True) -> list[dict]:
+    async with get_db() as session:
+        query = select(Referral)
+        if active_only:
+            query = query.where(Referral.is_active.is_(True))
+        result = await session.execute(query)
+        referrals = result.scalars().all()
+        return [{
+            "id": r.id,
+            "code": r.code,
+            "description": r.description,
+            "is_active": r.is_active,
+            "created_at": r.created_at
+        } for r in referrals]
+
+
+# Деактивировать рефералку
+async def deactivate_referral(referral_id: int) -> bool:
+    async with get_db() as session:
+        referral = await session.get(Referral, referral_id)
+        if referral:
+            referral.is_active = False
+            await session.commit()
+            return True
+        return False
+
+
+# Привязать пользователя к рефералке
+async def assign_user_to_referral(user_id: int, referral_id: int) -> bool:
+    async with get_db() as session:
+        user = await session.get(User, user_id)
+        referral = await session.get(Referral, referral_id)
+        if user and referral:
+            user.referral_id = referral.id
+            await session.commit()
+            return True
+        return False
+
+
+# Получить статистику по рефералке
+async def get_referral_stats(referral_id: int) -> dict:
+    async with get_db() as session:
+        result = await session.execute(
+            select(func.count(User.user_id)).where(User.referral_id == referral_id)
+        )
+        count = result.scalar() or 0
+        return {"referral_id": referral_id, "users_count": count}
+
+async def get_referral_by_id(referral_id: int) -> dict | None:
+    async with get_db() as session:
+        result = await session.execute(
+            select(Referral).where(Referral.id == referral_id)
+        )
+        referral = result.scalar_one_or_none()
+        if not referral:
+            return None
+        return {
+            "id": referral.id,
+            "code": referral.code,
+            "description": referral.description,
+            "is_active": referral.is_active,
+            "created_at": referral.created_at,
+        }
+
+async def activate_referral(referral_id: int) -> bool:
+    async with get_db() as session:
+        result = await session.execute(
+            select(Referral).where(Referral.id == referral_id)
+        )
+        referral = result.scalar_one_or_none()
+        if not referral:
+            return False
+        referral.is_active = True
+        await session.commit()
+        return True

@@ -15,8 +15,7 @@ class User(Base):
     is_active = Column(Boolean, default=True)  # Для soft delete
     created_at = Column(DateTime, default=datetime.utcnow)
     currency_notify_time = Column(String, nullable=True, default=None)
-    source = Column(String(100), nullable=True)
-
+    referral_id = Column(Integer, ForeignKey('referrals.id'), nullable=True)
     # Relationships
     debts = relationship("Debt", back_populates="user")
     scheduled_messages = relationship("ScheduledMessage", back_populates="user")
@@ -80,6 +79,17 @@ class Reminder(Base):
             'is_active': self.is_active,
             'created_at': self.created_at
         }
+
+class Referral(Base):
+    __tablename__ = 'referrals'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(50), unique=True, nullable=False)
+    description = Column(String(200), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+
+    # связь с пользователями
 
 
 
