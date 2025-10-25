@@ -108,22 +108,16 @@ async def open_reminders_menu(callback: CallbackQuery):
 
         # --- Долги ---
         debt_time = user_data.get("notify_time")
-        debt_text = (
-            await  tr(user_id, "reminder_status_active", time=debt_time)
-            if debt_time else
-            await tr(user_id, "menu.debts_off")
-        )
+        debt_status = "✅" if debt_time else "❌"
+        debt_text = await tr(user_id, "debt_reminders_text", time=debt_time or "—", status=debt_status)
 
         # --- Валюта ---
         currency_time = await get_user_currency_time(session, user_id)
-        currency_text = (
-            await tr(user_id, "menu.currency_on", time=currency_time)
-            if currency_time else
-            await tr(user_id, "menu.currency_off")
-        )
+        currency_status = "✅" if currency_time else "❌"
+        currency_text = await tr(user_id, "currency_reminders_text", time=currency_time or "—", status=currency_status)
 
         # --- Итоговый текст ---
-        text = f"{debt_text}\n{currency_text}"
+        text = f"{debt_text}\n\n{currency_text}"
 
         kb = await reminders_main_kb(user_id)
 

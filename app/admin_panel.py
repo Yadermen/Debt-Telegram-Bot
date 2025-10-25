@@ -14,7 +14,7 @@ from markupsafe import Markup
 from sqlalchemy import func, case
 
 from app.config import SYNC_DATABASE_URL
-from app.database.models import Base, User, Debt, ScheduledMessage, Reminder
+from app.database.models import Base, User, Debt, ScheduledMessage, Reminder, Referral
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -63,18 +63,24 @@ class SecureAdminIndexView(AdminIndexView):
 
     @expose('/')
     def index(self):
-        # Получаем статистику по всем пользователям
+        # читаем параметр из строки запроса
+        search_user_id = request.args.get("user_id", type=int)
+
+        query = User.query
+        if search_user_id:
+            query = query.filter(User.user_id == search_user_id)
+
+        users = query.all()
+
         users_stats = []
-        users = User.query.all()
         direction_map = {
             'owe': 'owe',
             'owed': 'owed',
-            'gave': 'owe',  # трактуем как "я отдал" → я должен
-            'took': 'owed'  # трактуем как "я взял" → мне должны
+            'gave': 'owe',
+            'took': 'owed'
         }
 
         for user in users:
-            # Подсчитываем долги по валютам
             stats_by_currency = db.session.query(
                 Debt.currency,
                 Debt.direction,
@@ -85,19 +91,17 @@ class SecureAdminIndexView(AdminIndexView):
                 Debt.closed == False
             ).group_by(Debt.currency, Debt.direction).all()
 
-            # Группируем по валютам
             currency_stats = {}
             for currency, direction, total in stats_by_currency:
-                norm_dir = direction_map.get(direction, direction)  # нормализация
+                norm_dir = direction_map.get(direction, direction)
                 if currency not in currency_stats:
                     currency_stats[currency] = {'owe': 0, 'owed': 0}
                 currency_stats[currency][norm_dir] = float(total or 0)
 
-            # Считаем баланс
-            balance_by_currency = {}
-            for currency, amounts in currency_stats.items():
-                balance = amounts['owed'] - amounts['owe']
-                balance_by_currency[currency] = balance
+            balance_by_currency = {
+                currency: amounts['owed'] - amounts['owe']
+                for currency, amounts in currency_stats.items()
+            }
 
             users_stats.append({
                 'user': user,
@@ -106,17 +110,20 @@ class SecureAdminIndexView(AdminIndexView):
                 'total_debts': len([d for d in user.debts if d.is_active and not d.closed])
             })
 
-        total_users = len(users)
+        total_users = User.query.count()
         total_debts = Debt.query.filter_by(is_active=True, closed=False).count()
         total_scheduled = ScheduledMessage.query.filter_by(is_active=True, sent=False).count()
         total_reminders = Reminder.query.filter_by(is_active=True).count()
 
-        return self.render('admin/custom_index.html',
-                           users_stats=users_stats,
-                           total_users=total_users,
-                           total_debts=total_debts,
-                           total_scheduled=total_scheduled,
-                           total_reminders=total_reminders)
+        return self.render(
+            'admin/custom_index.html',
+            users_stats=users_stats,
+            total_users=total_users,
+            total_debts=total_debts,
+            total_scheduled=total_scheduled,
+            total_reminders=total_reminders,
+            search_user_id=search_user_id
+        )
 
 
 # Базовый класс с защитой для всех ModelView
@@ -491,56 +498,75 @@ class UserStatsView(BaseView):
         )
 
 
+
+
+
 class TrafficStatsView(BaseView):
     @expose('/')
     def index(self):
         stats = (
             db.session.query(
-                User.source,
-                func.count(User.user_id).label('total'),
-                func.sum(case((User.lang == 'ru', 1), else_=0)).label('ru'),
-                func.sum(case((User.lang == 'uz', 1), else_=0)).label('uz'),
+                Referral.id,
+                Referral.code,
+                Referral.description,
+                Referral.is_active,
+                func.count(User.user_id).label("total"),
+                func.sum(case((User.lang == "ru", 1), else_=0)).label("ru"),
+                func.sum(case((User.lang == "uz", 1), else_=0)).label("uz"),
             )
-            .group_by(User.source)
+            .outerjoin(User, User.referral_id == Referral.id)
+            .group_by(Referral.id, Referral.code, Referral.description, Referral.is_active)
             .all()
         )
 
         template = """
-        <!doctype html>
-        <html lang="ru">
-        <head>
-            <meta charset="utf-8">
-            <title>Источники пользователей</title>
-            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
-        </head>
-        <body>
-        <div class="container mt-4">
-            <h1>📢 Источники пользователей</h1>
-            <table class="table table-bordered table-striped mt-4">
-                <thead class="thead-dark">
-                    <tr>
-                        <th>Источник</th>
-                        <th>Всего</th>
-                        <th>Русскоязычных</th>
-                        <th>Узбекоязычных</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for s in stats %}
-                    <tr>
-                        <td>{{ s.source or 'Не указан' }}</td>
-                        <td>{{ s.total }}</td>
-                        <td>{{ s.ru }}</td>
-                        <td>{{ s.uz }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            <a href="{{ url_for('admin.index') }}" class="btn btn-secondary mt-3">⬅ Назад</a>
-        </div>
-        </body>
-        </html>
-        """
+            <!doctype html>
+            <html lang="ru">
+            <head>
+                <meta charset="utf-8">
+                <title>Статистика по рефералкам</title>
+                <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+            </head>
+            <body>
+            <div class="container mt-4">
+                <h1>🎯 Реферальные ссылки</h1>
+                <table class="table table-bordered table-striped mt-4">
+                    <thead class="thead-dark">
+                        <tr>
+                            <th>ID</th>
+                            <th>Код</th>
+                            <th>Описание</th>
+                            <th>Статус</th>
+                            <th>Всего пользователей</th>
+                            <th>Русскоязычных</th>
+                            <th>Узбекоязычных</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in stats %}
+                        <tr>
+                            <td>{{ r.id }}</td>
+                            <td>{{ r.code }}</td>
+                            <td>{{ r.description or '-' }}</td>
+                            <td>
+                                {% if r.is_active %}
+                                    <span class="badge badge-success">Активна</span>
+                                {% else %}
+                                    <span class="badge badge-danger">Неактивна</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ r.total }}</td>
+                            <td>{{ r.ru }}</td>
+                            <td>{{ r.uz }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <a href="{{ url_for('admin.index') }}" class="btn btn-secondary mt-3">⬅ Назад</a>
+            </div>
+            </body>
+            </html>
+            """
         return render_template_string(template, stats=stats)
 
 
@@ -597,19 +623,32 @@ def create_admin_app():
         </div>
     </div>
 
-    <div class="col-md-4">
-        <div class="card text-white bg-info mb-3">
-            <div class="card-header">📨 Сообщения</div>
-            <div class="card-body">
-                <h5 class="card-title">{{ total_scheduled }}</h5>
-                <p class="card-text">Запланировано к отправке</p>
+        <div class="col-md-4">
+            <div class="card text-white bg-info mb-3">
+                <div class="card-header">📨 Сообщения</div>
+                <div class="card-body">
+                    <h5 class="card-title">{{ total_scheduled }}</h5>
+                    <p class="card-text">Запланировано к отправке</p>
+                </div>
             </div>
         </div>
     </div>
-</div>
-        </div>
+            </div>
 
-        <h2 class="mt-5">📈 Статистика по пользователям</h2>
+            <div class="d-flex justify-content-between align-items-center mt-5">
+        <h2 class="mb-0">📈 Статистика по пользователям</h2>
+        <form method="get" action="{{ url_for('admin.index') }}" class="form-inline">
+            <div class="form-group mr-2">
+                <input type="text" name="user_id" class="form-control" placeholder="Введите ID пользователя"
+                       value="{{ request.args.get('user_id', '') }}">
+            </div>
+            <button type="submit" class="btn btn-primary">🔍 Найти</button>
+            {% if request.args.get('user_id') %}
+                <a href="{{ url_for('admin.index') }}" class="btn btn-secondary ml-2">Сброс</a>
+            {% endif %}
+        </form>
+    </div>
+
 
         {% for user_stat in users_stats %}
         <div class="card mt-3">
@@ -668,7 +707,7 @@ def create_admin_app():
 
         {% if not users_stats %}
         <div class="alert alert-info mt-3">
-            ℹ️ Пока нет пользователей в системе. Создайте первого пользователя!
+            ℹ️ Не найдено.
         </div>
         {% endif %}
     </div>

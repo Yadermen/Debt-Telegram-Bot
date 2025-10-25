@@ -54,7 +54,7 @@ LANGS = {
         'clear_all_confirm': 'Вы точно хотите удалить все долги?',
         'yes': 'Да',
         'no': 'Нет',
-        'notify_time': 'Введите новое время для напоминаний (например: 09:00):',
+        'notify_time': 'Введите новое время для напоминаний (например: 09:00), сейчас у вас установлено {time}:',
         'notify_wrong': 'Некорректный формат времени. Введите в формате ЧЧ:ММ, например 09:00',
         'notify_set': 'Время напоминаний установлено!\n',
         'edit_what': 'Что изменить?',
@@ -193,16 +193,16 @@ LANGS = {
         "currency_reminder_status": "Курс валют ежедневно в 7:00",
 
         # Подменю «Напоминания о долгах»
-        "debt_reminders_text": "Автоматические напоминание долгов(за 3 дня, ежедневно, если заём просрочен).",
-        "enable_debt": "Включить напоминания",
-        "disable_debt": "Выключить напоминания",
+        "debt_reminders_text": "Автоматические напоминание долгов\nВ {time} {status}",
+        "enable_debt": "⏰ Включить напоминания",
+        "disable_debt": "❌ Выключить напоминания",
         "set_time": "Настроить время",
 
         # Подменю «Напоминания о курсе валют»
-        "currency_reminders_text": "Например, курс доллара каждый день в 7:00.",
-        "enable_currency_morning": "Включить курс валют утром (7:00)",
-        "enable_currency_evening": "Включить курс валют вечером (17:00)",
-        "disable_currency": "Выключить курс валют",
+        "currency_reminders_text": "У вас сейчас установлено на {time}",
+        "enable_currency_morning": "⏰ Утром (7:00) {status}",
+        "enable_currency_evening": "⏰ Вечером (17:00) {status}",
+        "disable_currency": "⏰ Выключить курс валют {status}",
         'ai_debt_input_hint': (
             "Введите данные свободным текстом:\n"
             "- направление ('я должен' или 'мне должны')\n"
@@ -309,7 +309,7 @@ LANGS = {
         "clear_all_confirm": "Barcha qarzlarni o'chirilsinmi?",
         "yes": "Ha",
         "no": "Yo'q",
-        "notify_time": "Eslatma vaqti (masalan: 09:00):",
+        "notify_time": "Yangi eslatma vaqtini yozing (masalan: 09:00), sizda hozir soat {time} qo'yilgan:",
         "notify_wrong": "Vaqt formati noto'g'ri. Masalan: 09:00",
         "notify_set": "Eslatma vaqti o'rnatildi!\n",
         "edit_what": "Nimani o'zgartirasiz?",
@@ -417,16 +417,16 @@ LANGS = {
         "currency_reminder_status": "Kurs har kuni soat 7:00da",
 
         # Подменю «Напоминания о долгах»
-        "debt_reminders_text": "Avtomatik qarz eslatmasi (3 kun oldin, agar qarz muddati tugagan bo'lsa har kuni).",
+        "debt_reminders_text": "Avtomatik qarz eslatmasi\nSoat {time}da {status}",
         "enable_debt": "⏰ Eslatmalarni yoqish",
         "disable_debt": "❌ Eslatmalarni o'chirish",
         "set_time": "Vaqtini o'zgartirish",
 
         # Подменю «Напоминания о курсе валют»
-        "currency_reminders_text": "Misol uchun dollar kursi har kuni soat 7:00.",
-        "enable_currency_morning": "⏰ Ertalabgi valyutalar kursini yoqish (7:00)",
-        "enable_currency_evening": "⏰ Kechki valyutalar kursini yoqish (17:00)",
-        "disable_currency": "❌ Valyutalar kursini o'chirish",
+        "currency_reminders_text": "Sizda hozir soat {time}ga yoqilgan",
+        "enable_currency_morning": "⏰ Ertalab (7:00) {status}",
+        "enable_currency_evening": "⏰ Kechqurun (17:00) {status}",
+        "disable_currency": "⏰ Valyuta kursini o'chirish {status}",
         'currency_error': '❌ Valyuta kurslarini olishda xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko ring.',
         'currency_format_error': '❌ Valyuta kurslarini formatlashda xatolik yuz berdi.',
         'debts_list': '📥 Qarzlar',
