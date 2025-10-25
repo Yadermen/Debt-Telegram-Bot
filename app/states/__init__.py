@@ -39,12 +39,16 @@ class AddReminder(StatesGroup):
 
 class EditReminder(StatesGroup):
     """Состояния для редактирования напоминания"""
-    edit_value = State()
+    text = State()           # ← ДОБАВИТЬ
+    datetime = State()       # ← ДОБАВИТЬ
+    repeat = State()         # ← ДОБАВИТЬ
+
 
 class AdminReferral(StatesGroup):
     """Состояния для управления рефералками"""
-    waiting_for_code = State()         # ввод кода (например promo2025)
+    waiting_for_code = State()
     waiting_for_description = State()
+
 
 __all__ = [
     'AddDebt',
