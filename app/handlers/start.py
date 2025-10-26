@@ -6,11 +6,13 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
+
 from ..database import get_user_data, get_user_by_id, save_user_lang, get_or_create_user
 from ..keyboards import tr, LANGS, main_menu, CallbackData, settings_menu, my_debts_menu
 from ..utils import safe_edit_message
 from ..states import AddDebt, EditDebt, SetNotifyTime, AdminBroadcast
 from .debt import show_debts_simple
+from app.database.connection import get_db, AsyncSessionLocal
 
 
 router = Router()
@@ -38,14 +40,18 @@ async def language_menu_start(user_id: int) -> InlineKeyboardMarkup:
 async def cmd_start(message: Message, state: FSMContext):
     """Обработчик команды /start"""
     user_id = message.from_user.id
+    print(f"[START] Пользователь {user_id} вызвал /start")
+
     if message.chat.type == "private":
         try:
             await message.delete()
+            print(f"[INFO] Сообщение /start от {user_id} удалено")
         except Exception as e:
-            print(f"Ошибка при удалении: {e}")
+            print(f"[WARN] Ошибка при удалении сообщения от {user_id}: {e}")
 
     try:
         current_state = await state.get_state()
+        print(f"[DEBUG] Текущее состояние FSM для {user_id}: {current_state}")
 
         if current_state:
             if isinstance(current_state, str) and (
@@ -54,6 +60,8 @@ async def cmd_start(message: Message, state: FSMContext):
                 current_state.startswith('SetNotifyTime:') or
                 current_state.startswith('AdminBroadcast:')
             ):
+                print(f"[INFO] У {user_id} есть незавершённый процесс: {current_state}")
+
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(
                         text=await tr(user_id, 'continue_process'),
@@ -76,19 +84,24 @@ async def cmd_start(message: Message, state: FSMContext):
                     process_name = await tr(user_id, 'process_broadcast')
 
                 warning_text = await tr(user_id, 'process_interrupted', process=process_name)
+                print(f"[INFO] Отправляем предупреждение пользователю {user_id}: {process_name}")
                 await message.answer(warning_text, reply_markup=kb)
                 return
 
         await state.clear()
+        print(f"[DEBUG] FSM состояние очищено для {user_id}")
 
         user = await get_user_by_id(user_id)
+        print(f"[DEBUG] Результат get_user_by_id({user_id}): {user}")
 
         # ✅ Проверяем аргументы /start
         args = message.text.split(maxsplit=1)
         referral_code = args[1] if len(args) > 1 else None
+        print(f"[DEBUG] Аргументы /start от {user_id}: {args}, referral_code={referral_code}")
 
         if not user:
-            # Новый пользователь
+            print(f"[INFO] Новый пользователь {user_id}, создаём запись")
+
             welcome_text = """
 🇷🇺 Добро пожаловать в QarzNazoratBot!
 Выберите язык / Tilni tanlang:
@@ -98,36 +111,42 @@ async def cmd_start(message: Message, state: FSMContext):
 """
             kb = await language_menu_start(user_id)
 
-            from ..database import async_session
+            from app.database.connection import get_db, AsyncSessionLocal
             from ..database.models import User
             from ..database.crud import get_referral_by_code
 
-            async with async_session() as session:
+            async with get_db() as session:
                 referral_id = None
                 if referral_code:
                     referral = await get_referral_by_code(referral_code)
+                    print(f"[DEBUG] Поиск referral по коду {referral_code}: {referral}")
                     if referral:
                         referral_id = referral["id"]
+                        print(f"[INFO] Привязываем referral_id={referral_id} к пользователю {user_id}")
 
                 new_user = User(
                     user_id=user_id,
                     lang='ru',
-                    referral_id=referral_id  # 👈 вместо source
+                    referral_id=referral_id
                 )
                 session.add(new_user)
                 await session.commit()
+                print(f"[SUCCESS] Пользователь {user_id} создан в БД")
 
             await message.answer(welcome_text, reply_markup=kb)
             return
 
         # Старый пользователь
+        print(f"[INFO] Пользователь {user_id} уже существует, загружаем данные")
         user_data = await get_user_data(user_id)
+        print(f"[DEBUG] user_data для {user_id}: {user_data}")
+
         welcome_text = await tr(user_id, 'welcome')
         kb = await main_menu(user_id)
         await message.answer(welcome_text, reply_markup=kb)
 
     except Exception as e:
-        print(f"❌ Ошибка в cmd_start для пользователя {user_id}: {e}")
+        print(f"[ERROR] Ошибка в cmd_start для пользователя {user_id}: {e}")
         welcome_text = """
 🇷🇺 Добро пожаловать в QarzNazoratBot!
 Выберите язык / Tilni tanlang:
@@ -137,6 +156,7 @@ async def cmd_start(message: Message, state: FSMContext):
 """
         kb = await language_menu_start(user_id)
         await message.answer(welcome_text, reply_markup=kb)
+
 
 @router.callback_query(lambda c: c.data == 'continue_current_process')
 async def continue_current_process(call: CallbackQuery, state: FSMContext):

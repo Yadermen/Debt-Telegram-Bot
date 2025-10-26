@@ -1,3 +1,4 @@
+import re
 from urllib.parse import urlparse
 
 from aiogram import Router, F
@@ -915,30 +916,48 @@ async def referral_create(call: CallbackQuery, state: FSMContext):
 
 @router.message(AdminReferral.waiting_for_code)
 async def referral_set_code(message: Message, state: FSMContext):
-    code = (message.text or "").strip()
+    raw_code = (message.text or "").strip()
 
-    try: await message.delete()
-    except: pass
+    try:
+        await message.delete()
+    except:
+        pass
 
     data = await state.get_data()
     if last_bot := data.get("last_bot_msg"):
-        try: await message.bot.delete_message(message.chat.id, last_bot)
-        except: pass
+        try:
+            await message.bot.delete_message(message.chat.id, last_bot)
+        except:
+            pass
 
-    if not code:
+    # 🔎 Валидация
+    if not raw_code:
         msg = await message.answer("❌ Код не может быть пустым. Введите снова:")
         await state.update_data(last_bot_msg=msg.message_id)
         return
 
-    # проверка уникальности
+    # Разрешаем только буквы, цифры, подчёркивание и дефис
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", raw_code):
+        msg = await message.answer("❌ Код может содержать только латинские буквы, цифры, '_' и '-'. Введите снова:")
+        await state.update_data(last_bot_msg=msg.message_id)
+        return
+
+    # Ограничение по длине
+    if len(raw_code) < 3 or len(raw_code) > 50:
+        msg = await message.answer("❌ Длина кода должна быть от 3 до 50 символов. Введите снова:")
+        await state.update_data(last_bot_msg=msg.message_id)
+        return
+
+    # Проверка уникальности
     async with get_db() as session:
-        exists = await session.scalar(select(Referral).where(Referral.code == code))
+        exists = await session.scalar(select(Referral).where(Referral.code == raw_code))
     if exists:
         msg = await message.answer("❌ Такая рефералка уже существует. Введите другой код:")
         await state.update_data(last_bot_msg=msg.message_id)
         return
 
-    await state.update_data(referral_code=code)
+    # ✅ Всё ок — сохраняем в state
+    await state.update_data(referral_code=raw_code)
     await state.set_state(AdminReferral.waiting_for_description)
     msg = await message.answer("📝 Введите описание (или '-' чтобы оставить пустым):")
     await state.update_data(last_bot_msg=msg.message_id)
@@ -967,6 +986,7 @@ async def referral_set_description(message: Message, state: FSMContext):
         if referral:
             await message.answer(
                 f"✅ Рефералка создана!\n\n"
+                f"Ссылка: https://t.me//QarzNazoratBot?start={referral['code']}\n"
                 f"Код: {referral['code']}\n"
                 f"Описание: {referral['description'] or '-'}\n"
                 f"Статус: {'Активна' if referral['is_active'] else 'Неактивна'}",
@@ -1049,6 +1069,7 @@ async def render_referral_view(call: CallbackQuery, rid: int):
 
     text = (
         f"🎯 Рефералка\n\n"
+        f"Ссылка: https://t.me//QarzNazoratBot?start={referral['code']}\n"
         f"Код: {referral['code']}\n"
         f"Описание: {referral['description'] or '-'}\n"
         f"Статус: {'✅ Активна' if referral['is_active'] else '❌ Неактивна'}\n"

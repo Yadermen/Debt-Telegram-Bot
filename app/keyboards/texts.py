@@ -201,7 +201,7 @@ LANGS = {
         "set_time": "Настроить время",
 
         # Подменю «Напоминания о курсе валют»
-        "currency_reminders_text": "У вас сейчас установлено на {time}",
+        "currency_reminders_text": "У вас сейчас установлено автоматическое напоминание курса валют на {time}",
         "enable_currency_morning": "⏰ Утром (7:00) {status}",
         "enable_currency_evening": "⏰ Вечером (17:00) {status}",
         "disable_currency": "⏰ Выключить курс валют {status}",
@@ -449,7 +449,7 @@ LANGS = {
         "set_time": "Vaqtini o'zgartirish",
 
         # Подменю «Напоминания о курсе валют»
-        "currency_reminders_text": "Sizda hozir soat {time}ga yoqilgan",
+        "currency_reminders_text": "Sizda valyutalar elstamasi hozir soat {time} ga yoqilgan",
         "enable_currency_morning": "⏰ Ertalab (7:00) {status}",
         "enable_currency_evening": "⏰ Kechqurun (17:00) {status}",
         "disable_currency": "⏰ Valyuta kursini o'chirish {status}",

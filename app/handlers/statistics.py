@@ -321,6 +321,12 @@ async def callback_change_currency(callback: CallbackQuery):
     # Извлекаем валюту из callback_data
     currency = callback.data.split("_")[-1]  # USD, EUR или UZS
 
+    # Проверяем, не изменилась ли валюта (защита от двойного клика)
+    current_text = callback.message.text
+    if f"🌍 Валюта: {currency}" in current_text or f"Валюта: {currency}" in current_text:
+        await callback.answer()
+        return
+
     # Форматируем сообщение с новой валютой
     stats_text = await StatisticsService.format_statistics_message(user_id, currency)
     keyboard = await get_statistics_keyboard(user_id, current_currency=currency)
@@ -333,7 +339,6 @@ async def callback_change_currency(callback: CallbackQuery):
     )
 
     await callback.answer()
-
 
 @router.callback_query(F.data == "stats_export_excel")
 async def callback_export_excel(callback: CallbackQuery):
