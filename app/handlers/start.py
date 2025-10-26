@@ -1,15 +1,19 @@
 """
 Обработчики команды /start и выбора языка
 """
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
+
 from ..database import get_user_data, get_user_by_id, save_user_lang, get_or_create_user
-from ..keyboards import tr, LANGS, main_menu, CallbackData
+from ..keyboards import tr, LANGS, main_menu, CallbackData, settings_menu, my_debts_menu
 from ..utils import safe_edit_message
 from ..states import AddDebt, EditDebt, SetNotifyTime, AdminBroadcast
+from .debt import show_debts_simple
+from app.database.connection import get_db, AsyncSessionLocal
+
 
 router = Router()
 
@@ -36,22 +40,28 @@ async def language_menu_start(user_id: int) -> InlineKeyboardMarkup:
 async def cmd_start(message: Message, state: FSMContext):
     """Обработчик команды /start"""
     user_id = message.from_user.id
+    print(f"[START] Пользователь {user_id} вызвал /start")
+
+    if message.chat.type == "private":
+        try:
+            await message.delete()
+            print(f"[INFO] Сообщение /start от {user_id} удалено")
+        except Exception as e:
+            print(f"[WARN] Ошибка при удалении сообщения от {user_id}: {e}")
 
     try:
-        # Получаем текущее состояние пользователя
         current_state = await state.get_state()
+        print(f"[DEBUG] Текущее состояние FSM для {user_id}: {current_state}")
 
-        # Если пользователь находится в процессе добавления/редактирования долга
         if current_state:
-            # Предупреждаем о прерывании процесса
             if isinstance(current_state, str) and (
                 current_state.startswith('AddDebt:') or
                 current_state.startswith('EditDebt:') or
                 current_state.startswith('SetNotifyTime:') or
                 current_state.startswith('AdminBroadcast:')
             ):
+                print(f"[INFO] У {user_id} есть незавершённый процесс: {current_state}")
 
-                # Создаем клавиатуру с выбором
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(
                         text=await tr(user_id, 'continue_process'),
@@ -74,18 +84,24 @@ async def cmd_start(message: Message, state: FSMContext):
                     process_name = await tr(user_id, 'process_broadcast')
 
                 warning_text = await tr(user_id, 'process_interrupted', process=process_name)
+                print(f"[INFO] Отправляем предупреждение пользователю {user_id}: {process_name}")
                 await message.answer(warning_text, reply_markup=kb)
                 return
 
-        # Очищаем состояние, если дошли сюда
         await state.clear()
+        print(f"[DEBUG] FSM состояние очищено для {user_id}")
 
-        # Проверяем, существует ли пользователь
         user = await get_user_by_id(user_id)
+        print(f"[DEBUG] Результат get_user_by_id({user_id}): {user}")
+
+        # ✅ Проверяем аргументы /start
+        args = message.text.split(maxsplit=1)
+        referral_code = args[1] if len(args) > 1 else None
+        print(f"[DEBUG] Аргументы /start от {user_id}: {args}, referral_code={referral_code}")
 
         if not user:
-            # Новый пользователь — предлагаем выбрать язык
-            # Показываем приветствие на двух языках
+            print(f"[INFO] Новый пользователь {user_id}, создаём запись")
+
             welcome_text = """
 🇷🇺 Добро пожаловать в QarzNazoratBot!
 Выберите язык / Tilni tanlang:
@@ -94,18 +110,43 @@ async def cmd_start(message: Message, state: FSMContext):
 Выберите язык / Tilni tanlang:
 """
             kb = await language_menu_start(user_id)
+
+            from app.database.connection import get_db, AsyncSessionLocal
+            from ..database.models import User
+            from ..database.crud import get_referral_by_code
+
+            async with get_db() as session:
+                referral_id = None
+                if referral_code:
+                    referral = await get_referral_by_code(referral_code)
+                    print(f"[DEBUG] Поиск referral по коду {referral_code}: {referral}")
+                    if referral:
+                        referral_id = referral["id"]
+                        print(f"[INFO] Привязываем referral_id={referral_id} к пользователю {user_id}")
+
+                new_user = User(
+                    user_id=user_id,
+                    lang='ru',
+                    referral_id=referral_id
+                )
+                session.add(new_user)
+                await session.commit()
+                print(f"[SUCCESS] Пользователь {user_id} создан в БД")
+
             await message.answer(welcome_text, reply_markup=kb)
             return
 
-        # Существующий пользователь
+        # Старый пользователь
+        print(f"[INFO] Пользователь {user_id} уже существует, загружаем данные")
         user_data = await get_user_data(user_id)
+        print(f"[DEBUG] user_data для {user_id}: {user_data}")
+
         welcome_text = await tr(user_id, 'welcome')
         kb = await main_menu(user_id)
         await message.answer(welcome_text, reply_markup=kb)
 
     except Exception as e:
-        print(f"❌ Ошибка в cmd_start для пользователя {user_id}: {e}")
-        # В случае ошибки показываем выбор языка
+        print(f"[ERROR] Ошибка в cmd_start для пользователя {user_id}: {e}")
         welcome_text = """
 🇷🇺 Добро пожаловать в QarzNazoratBot!
 Выберите язык / Tilni tanlang:
@@ -273,3 +314,17 @@ async def back_to_main(call: CallbackQuery, state: FSMContext):
     except Exception as e:
         print(f"❌ Ошибка в back_to_main: {e}")
         await call.answer("❌ Ошибка возврата в меню")
+
+@router.callback_query(F.data == CallbackData.SETTINGS)
+async def settings_menu_handler(call: CallbackQuery, state: FSMContext):
+    """Меню настроек"""
+    user_id = call.from_user.id
+    try:
+        await state.clear()
+        text = await tr(user_id, 'choose_action')
+        kb = await settings_menu(user_id)
+        await safe_edit_message(call, text, kb)
+    except Exception as e:
+        print(f"❌ Ошибка в settings_menu_handler: {e}")
+        await call.answer("❌ Ошибка настроек")
+

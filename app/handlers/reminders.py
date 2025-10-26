@@ -1,243 +1,941 @@
-"""
-Обработчики для напоминаний - исправленная версия с полной обработкой ошибок
-"""
-from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
-from aiogram.filters import StateFilter
-import re
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
+from datetime import datetime, timedelta
+from aiogram.exceptions import TelegramBadRequest
+from sqlalchemy import select
 
-# Заменить все импорты в начале файла на:
-try:
-    from app.database import get_user_data, save_user_notify_time
-    from app.keyboards import tr
-    from app.states import SetNotifyTime
-    from app.utils import safe_edit_message
-    from app.utils.scheduler import schedule_all_reminders
-except ImportError as e:
-    print(f"❌ Ошибка импорта в reminders.py: {e}")
+from app.database.connection import get_db
+from app.database.crud import (
+    add_reminder, get_user_reminders,
+    get_user_data, enable_debt_reminders, disable_debt_reminders,
+    set_debt_reminder_time, update_reminder_text, create_currency_reminder,
+    delete_currency_reminders, get_reminder_by_id, set_user_currency_time, get_user_currency_time
+)
+from app.database.models import Reminder
+from app.keyboards import menu_button, main_menu
+from app.keyboards.texts import tr
+from app.keyboards.callbacks import CallbackData, DynamicCallbacks
+from aiogram.filters import Command
+import pytz
+from app.config import ADMIN_IDS  # Импортируй свой список админов
+from app.states import AddReminder, SetNotifyTime, EditReminder
+from app.utils import safe_edit_message
 
 router = Router()
 
 
-def is_text_message(message: Message) -> bool:
-    """Проверить, что сообщение содержит только текст"""
+# --- Хелпер для безопасного редактирования ---
+async def safe_edit_text(message, text: str, reply_markup=None) -> bool:
     try:
-        return message.content_type == 'text' and message.text and message.text.strip()
-    except Exception as e:
-        print(f"❌ Ошибка в is_text_message: {e}")
-        return False
+        await message.edit_text(text, reply_markup=reply_markup)
+        return True
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e).lower():
+            print("[LOG] safe_edit_text: сообщение не изменилось, пропускаем")
+            return False
+        raise
+
+def is_admin(user_id: int) -> bool:
+    """Проверка является ли пользователь админом"""
+    return user_id in ADMIN_IDS
 
 
-@router.callback_query(F.data == 'reminders_menu')
-async def reminders_menu(call: CallbackQuery, state: FSMContext):
-    """Меню напоминаний"""
-    user_id = call.from_user.id
+
+# --- Кнопка отмены ---
+async def cancel_kb(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=await tr(user_id, "cancel_btn"),
+                                  callback_data=CallbackData.BACK_MAIN_REMINDER)]
+        ]
+    )
+
+
+
+# --- Главное меню напоминаний ---
+async def reminders_main_kb(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📥 " + await tr(user_id, "debts_btn"),
+                                  callback_data=CallbackData.DEBT_REMINDERS)],
+            [InlineKeyboardButton(text="💱 " + await tr(user_id, "currency_btn"),
+                                  callback_data=CallbackData.CURRENCY_REMINDERS)],
+            [InlineKeyboardButton(text="➕ " + await tr(user_id, "add_reminder_btn"),
+                                  callback_data=CallbackData.ADD_REMINDER)],
+            [InlineKeyboardButton(text="📋 " + await tr(user_id, "my_reminders_btn"),
+                                  callback_data=CallbackData.MY_REMINDERS)],
+            [InlineKeyboardButton(text="⬅️ " + await tr(user_id, "back_btn"),
+                                  callback_data=CallbackData.BACK_MAIN)],
+        ]
+    )
+
+@router.callback_query(F.data == CallbackData.BACK_MAIN_REMINDER)
+async def back_main_reminder(call: CallbackQuery, state: FSMContext):
+    # убираем "часики"
+    await call.answer()
+
     try:
         await state.clear()
-
-        try:
-            user_data = await get_user_data(user_id)
-        except Exception as db_e:
-            print(f"❌ Ошибка получения данных пользователя: {db_e}")
-            try:
-                await call.message.answer(await tr(user_id, 'db_error'))
-                return
-            except Exception as msg_e:
-                print(f"❌ Ошибка отправки сообщения об ошибке БД: {msg_e}")
-                return
-
-        current = user_data.get('notify_time', '09:00')
-
-        try:
-            text = await tr(user_id, 'reminder_time', time=current if current else '-')
-
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text=await tr(user_id, 'reminder_change'),
-                    callback_data='reminder_change_time'
-                )],
-                [InlineKeyboardButton(
-                    text=await tr(user_id, 'to_menu'),
-                    callback_data='back_main'
-                )],
-            ])
-
-            await safe_edit_message(call, text, kb)
-        except Exception as ui_e:
-            print(f"❌ Ошибка формирования UI: {ui_e}")
-            try:
-                await call.answer("❌ Ошибка интерфейса")
-            except:
-                pass
-
+        # просто удаляем сообщение с меню
+        await call.message.delete()
     except Exception as e:
-        print(f"❌ Критическая ошибка в reminders_menu: {e}")
+        print(f"❌ Ошибка в back_main: {e}")
         try:
-            await call.answer("❌ Ошибка меню напоминаний")
+            await call.answer("❌ Ошибка при удалении сообщения", show_alert=True)
         except:
             pass
 
 
-@router.callback_query(F.data == 'reminder_change_time')
-async def reminder_change_time(call: CallbackQuery, state: FSMContext):
-    """Изменение времени напоминаний"""
-    user_id = call.from_user.id
+@router.callback_query(F.data == CallbackData.REMINDERS_MENU)
+async def open_reminders_menu(callback: CallbackQuery):
+    async with get_db() as session:
+        user_id = callback.from_user.id
+        user_data = await get_user_data(user_id)
+
+        # --- Долги ---
+        debt_time = user_data.get("notify_time")
+        debt_status = "✅" if debt_time else "❌"
+
+        if debt_time:
+            debt_text = await tr(user_id, "debt_reminders_status_on", time=debt_time, status=debt_status)
+        else:
+            debt_text = await tr(user_id, "debt_reminders_status_off", status=debt_status)
+
+        # --- Валюта ---
+        currency_time = await get_user_currency_time(session, user_id)
+        currency_status = "✅" if currency_time else "❌"
+        currency_text = await tr(user_id, "currency_reminders_text", time=currency_time or "—", status=currency_status)
+
+        # --- Итоговый текст ---
+        text = f"{debt_text}\n\n{currency_text}"
+
+        kb = await reminders_main_kb(user_id)
+
+        try:
+            await callback.message.edit_text(text, reply_markup=kb)
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e).lower():
+                pass
+            else:
+                raise
+
+        await callback.answer()
+
+
+
+
+
+# --- Долговые напоминания ---
+@router.callback_query(F.data == CallbackData.DEBT_REMINDERS)
+async def open_debt_reminders(callback: CallbackQuery):
+    user_data = await get_user_data(callback.from_user.id)
+    debt_time = user_data.get("notify_time")
+    status = "✅" if debt_time else "❌"
+
+    kb = await debt_reminders_kb(callback.from_user.id)
+
+    if debt_time:
+        text = await tr(callback.from_user.id, "debt_reminders_status_on", time=debt_time, status=status)
+    else:
+        text = await tr(callback.from_user.id, "debt_reminders_status_off", status=status)
 
     try:
-        prompt_text = await tr(user_id, 'notify_time')
-        await call.message.edit_text(prompt_text)
-        await state.set_state(SetNotifyTime.waiting_for_time)
-
-    except Exception as e:
-        print(f"❌ Ошибка в reminder_change_time: {e}")
-        try:
-            await call.answer("❌ Ошибка изменения времени")
-        except:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e).lower():
             pass
+        else:
+            raise
+
+    await callback.answer()
+
+
+@router.callback_query(F.data == CallbackData.TOGGLE_DEBT_REMINDERS)
+async def toggle_debt_reminders(callback: CallbackQuery):
+    user_data = await get_user_data(callback.from_user.id)
+    enabled_now = user_data.get("notify_time") is not None
+
+    async with get_db() as session:
+        if enabled_now:
+            await disable_debt_reminders(session, callback.from_user.id)
+            print(f"[LOG] Выключены долговые напоминания для user={callback.from_user.id}")
+        else:
+            await enable_debt_reminders(session, callback.from_user.id, default_time="09:00")
+            print(f"[LOG] Включены долговые напоминания для user={callback.from_user.id}, время=09:00")
+
+    await open_debt_reminders(callback)
+
+
+@router.callback_query(F.data == CallbackData.SETUP_REMINDER_TIME)
+async def setup_reminder_time(callback: CallbackQuery, state: FSMContext):
+    user_data = await get_user_data(callback.from_user.id)
+    current_time = user_data.get("notify_time")
+
+    if not current_time:
+        current_time = await tr(callback.from_user.id, "time_not_set")
+
+    sent_message = await callback.message.answer(
+        await tr(callback.from_user.id, "notify_time", time=current_time),
+        reply_markup=await cancel_kb(callback.from_user.id)
+    )
+
+    await state.update_data(bot_message_id=sent_message.message_id)
+    await state.set_state(SetNotifyTime.waiting_for_time)
+    print(f"[LOG] Запрос времени долгового напоминания для user={callback.from_user.id}")
+    await callback.answer()
 
 
 @router.message(SetNotifyTime.waiting_for_time)
-async def set_notify_time_handler(message: Message, state: FSMContext):
-    """Установка времени уведомлений"""
-    user_id = message.from_user.id
+async def process_debt_time(message: types.Message, state: FSMContext):
+    if message.text.lower() in ("отмена", "cancel"):
+        await state.clear()
+        print(f"[LOG] Отмена установки времени долгового напоминания user={message.from_user.id}")
+        await message.answer(await tr(message.from_user.id, "cancelled"))
+        return
 
     try:
-        # Проверяем тип сообщения
-        if not is_text_message(message):
-            try:
-                error_text = await tr(user_id, 'notify_wrong')
-                await message.answer(error_text)
-                return
-            except Exception as inner_e:
-                print(f"❌ Ошибка при отправке сообщения об ошибке типа: {inner_e}")
-                await state.clear()
-                return
+        t = datetime.strptime(message.text.strip(), "%H:%M").time()
+    except ValueError:
+        await message.answer(await tr(message.from_user.id, "notify_wrong"))
+        return
 
-        time_text = message.text.strip()
+    async with get_db() as session:
+        await set_debt_reminder_time(session, message.from_user.id, t.strftime("%H:%M"))
+        print(f"[LOG] Установлено время долгового напоминания user={message.from_user.id}, time={t.strftime('%H:%M')}")
 
+    # Получаем ID предыдущего сообщения бота
+    data = await state.get_data()
+    prev_bot_msg_id = data.get("bot_message_id")
+
+    # Удаляем сообщение пользователя и предыдущее сообщение бота
+    if message.chat.type == "private":
         try:
-            # Разрешаем разные форматы ввода: 9, 9:0, 9:00, 09:0, 09:00, 9:30, 09:30
-            if ':' in time_text:
-                parts = time_text.split(':')
-                if len(parts) != 2:
-                    raise ValueError("Неверный формат времени")
-                hour = int(parts[0])
-                minute = int(parts[1])
-            else:
-                hour = int(time_text)
-                minute = 0
+            await message.delete()
+            if prev_bot_msg_id:
+                await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+        except Exception as e:
+            print(f"Ошибка при удалении: {e}")
 
-            # Проверяем корректность времени
-            if not (0 <= hour < 24 and 0 <= minute < 60):
-                raise ValueError("Время вне допустимого диапазона")
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ " + await tr(message.from_user.id, "back_btn"),
+                                  callback_data=CallbackData.BACK_MAIN_REMINDER)]
+        ]
+    )
 
-            # Форматируем время с ведущими нулями
-            formatted_time = '{:02d}:{:02d}'.format(hour, minute)
+    await message.answer(
+        await tr(message.from_user.id, "notify_set") + t.strftime("%H:%M"),
+        reply_markup=kb
+    )
+    await state.clear()
 
-        except (ValueError, TypeError) as time_e:
-            print(f"❌ Ошибка валидации времени: {time_e}")
-            try:
-                await message.answer(await tr(user_id, 'notify_wrong'))
-                return
-            except Exception as msg_e:
-                print(f"❌ Ошибка отправки сообщения об ошибке времени: {msg_e}")
-                await state.clear()
-                return
 
-        try:
-            await save_user_notify_time(user_id, formatted_time)
-        except Exception as save_e:
-            print(f"❌ Ошибка сохранения времени уведомлений: {save_e}")
-            try:
-                await message.answer(await tr(user_id, 'save_notify_error'))
-                return
-            except Exception as msg_e:
-                print(f"❌ Ошибка отправки сообщения об ошибке сохранения: {msg_e}")
-                await state.clear()
-                return
+# --- Валютные напоминания ---
+@router.callback_query(F.data == CallbackData.CURRENCY_REMINDERS)
+async def open_currency_reminders(callback: CallbackQuery):
+    async with get_db() as session:
+        user_id = callback.from_user.id
+        currency_time = await get_user_currency_time(session, user_id)
 
-        # Перепланируем все напоминания после изменения времени
-        try:
-            await schedule_all_reminders()
-        except Exception as schedule_e:
-            print(f"❌ Ошибка перепланирования напоминаний: {schedule_e}")
-            # Не прерываем выполнение, так как время уже сохранено
+        morning_status = "✅" if currency_time == "07:00" else "❌"
+        evening_status = "✅" if currency_time == "17:00" else "❌"
+        disabled_status = "✅" if not currency_time else "❌"
 
-        try:
-            user_data = await get_user_data(user_id)
-        except Exception as get_e:
-            print(f"❌ Ошибка получения обновленных данных: {get_e}")
-            user_data = {'notify_time': formatted_time}
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text=await tr(user_id, "enable_currency_morning", status=morning_status),
+                callback_data=CallbackData.ENABLE_MORNING_RATES
+            )],
+            [InlineKeyboardButton(
+                text=await tr(user_id, "enable_currency_evening", status=evening_status),
+                callback_data=CallbackData.ENABLE_EVENING_RATES
+            )],
+            [InlineKeyboardButton(
+                text=await tr(user_id, "disable_currency", status=disabled_status),
+                callback_data=CallbackData.DISABLE_CURRENCY_RATES
+            )],
+            [InlineKeyboardButton(
+                text="⬅️ " + await tr(user_id, "back_btn"),
+                callback_data=CallbackData.REMINDERS_MENU
+            )],
+        ]
+    )
 
-        try:
-            success_text = await tr(user_id, 'notify_set')
-            time_info = await tr(user_id, 'reminder_time', time=user_data.get('notify_time', '-'))
+    text = await tr(user_id, "currency_reminders_text", time=currency_time or "не установлено")
+    print(f"[LOG] Открыто меню валютных напоминаний для user={user_id}")
+    await safe_edit_text(callback.message, text, reply_markup=kb)
+    await callback.answer()
 
-            kb = InlineKeyboardMarkup(inline_keyboard=[
+
+@router.callback_query(F.data == CallbackData.ENABLE_MORNING_RATES)
+async def enable_morning_rates(callback: CallbackQuery):
+    async with get_db() as session:
+        await set_user_currency_time(session, callback.from_user.id, "07:00")
+    await callback.answer(await tr(callback.from_user.id, "reminder_status_currency_morning"))
+    await open_currency_reminders(callback)
+
+
+@router.callback_query(F.data == CallbackData.ENABLE_EVENING_RATES)
+async def enable_evening_rates(callback: CallbackQuery):
+    async with get_db() as session:
+        await set_user_currency_time(session, callback.from_user.id, "17:00")
+    await callback.answer(await tr(callback.from_user.id, "reminder_status_currency_evening"))
+    await open_currency_reminders(callback)
+
+
+@router.callback_query(F.data == CallbackData.DISABLE_CURRENCY_RATES)
+async def disable_currency_rates(callback: CallbackQuery):
+    async with get_db() as session:
+        await set_user_currency_time(session, callback.from_user.id, None)
+    await callback.answer(await tr(callback.from_user.id, "currency_reminder_status"))
+    await open_currency_reminders(callback)
+
+
+
+
+# --- Мои напоминания ---
+@router.callback_query(F.data == CallbackData.MY_REMINDERS)
+async def open_my_reminders(callback: CallbackQuery):
+    async with get_db() as session:
+        reminders = await get_user_reminders(session, callback.from_user.id)
+
+    if not reminders:
+        text = await tr(callback.from_user.id, "no_reminders")
+    else:
+        text = await tr(callback.from_user.id, "list_title") + "\n\n"
+
+    kb_rows = []
+    for r in reminders:
+        kb_rows.append([
+            InlineKeyboardButton(
+                text=f"⏰ {r.text}",
+                callback_data=DynamicCallbacks.reminder_action("view", r.id)
+            )
+        ])
+
+    kb_rows.append([InlineKeyboardButton(text="⬅️ " + await tr(callback.from_user.id, "back_btn"),
+                                         callback_data=CallbackData.REMINDERS_MENU)])
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+    print(f"[LOG] Открыт список напоминаний для user={callback.from_user.id}, count={len(reminders)})")
+    await safe_edit_text(callback.message, text, reply_markup=kb)
+    await callback.answer()
+
+
+# --- Карточка напоминания ---
+@router.callback_query(F.data.startswith("reminder_"))
+async def reminder_card_handler(callback: CallbackQuery, state: FSMContext):
+    try:
+        parts = callback.data.split("_")
+        # parts = ["reminder", "edit", "text", "123"] или ["reminder", "view", "123"]
+
+        if len(parts) == 3:
+            # Формат: reminder_view_123 или reminder_delete_123
+            _, action, rid = parts
+            rid = int(rid)
+        elif len(parts) == 4:
+            # Формат: reminder_edit_text_123
+            _, action_type, action, rid = parts
+            action = f"{action_type}_{action}"  # edit_text, edit_datetime, edit_repeat
+            rid = int(rid)
+        else:
+            await callback.answer()
+            return
+
+    except Exception as e:
+        print(f"[ERROR] Ошибка парсинга callback: {e}, data={callback.data}")
+        await callback.answer()
+        return
+
+    user_id = callback.from_user.id
+
+    if action == "view":
+        async with get_db() as session:
+            r = await get_reminder_by_id(session, rid, user_id)
+        if not r:
+            await callback.answer(await tr(user_id, "not_found_or_no_access"))
+            return
+
+        repeat_text = {
+            "none": await tr(user_id, "repeat_none"),
+            "daily": await tr(user_id, "repeat_daily"),
+            "monthly": await tr(user_id, "repeat_monthly")
+        }.get(r.repeat, r.repeat)
+
+        text = f"⏰ {r.text}\n🕒 {r.due}\n🔁 {repeat_text}"
+
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text=await tr(user_id, "edit"),
+                                         callback_data=DynamicCallbacks.reminder_action("edit", rid)),
+                    InlineKeyboardButton(text=await tr(user_id, "delete"),
+                                         callback_data=DynamicCallbacks.reminder_action("delete", rid)),
+                ],
+                [InlineKeyboardButton(text="⬅️ " + await tr(user_id, "back_btn"),
+                                      callback_data=CallbackData.MY_REMINDERS)]
+            ]
+        )
+        await safe_edit_text(callback.message, text, reply_markup=kb)
+        await callback.answer()
+
+    elif action == "edit":
+        # Показываем меню выбора что редактировать
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
                 [InlineKeyboardButton(
-                    text=await tr(user_id, 'to_menu'),
-                    callback_data='back_main'
+                    text="📝 " + await tr(user_id, "edit_reminder_text"),
+                    callback_data=f"reminder_edit_text_{rid}"  # ← Изменить формат
                 )],
-            ])
+                [InlineKeyboardButton(
+                    text="⏰ " + await tr(user_id, "edit_reminder_datetime"),
+                    callback_data=f"reminder_edit_datetime_{rid}"  # ← Изменить формат
+                )],
+                [InlineKeyboardButton(
+                    text="🔄 " + await tr(user_id, "edit_reminder_repeat"),
+                    callback_data=f"reminder_edit_repeat_{rid}"  # ← Изменить формат
+                )],
+                [InlineKeyboardButton(
+                    text="⬅️ " + await tr(user_id, "back_btn"),
+                    callback_data=DynamicCallbacks.reminder_action("view", rid)
+                )],
+            ]
+        )
+        await safe_edit_text(callback.message, await tr(user_id, "edit_what"), reply_markup=kb)
+        await callback.answer()
 
-            await message.answer(success_text + time_info, reply_markup=kb)
-            await state.clear()
+    elif action == "edit_text":
+        await state.update_data(reminder_id=rid)
+        sent_message = await callback.message.answer(
+            await tr(user_id, "edit_reminder_text"),
+            reply_markup=await cancel_kb(user_id)
+        )
+        await state.update_data(bot_message_id=sent_message.message_id)
+        await state.set_state(EditReminder.text)
+        await callback.answer()
 
-        except Exception as ui_e:
-            print(f"❌ Ошибка формирования успешного ответа: {ui_e}")
+    elif action == "edit_datetime":
+        await state.update_data(reminder_id=rid)
+        # Генерируем пример: сегодня + 7 дней в 10:00
+        suggest_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d") + " 10:00"
+        ask_due_text = await tr(user_id, "ask_due")
+        ask_due_text = ask_due_text.replace("2025-09-22 10:00", suggest_date)
+
+        sent_message = await callback.message.answer(
+            ask_due_text,
+            reply_markup=await cancel_kb(user_id)
+        )
+        await state.update_data(bot_message_id=sent_message.message_id)
+        await state.set_state(EditReminder.datetime)
+        await callback.answer()
+
+    elif action == "edit_repeat":
+        await state.update_data(reminder_id=rid)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=await tr(user_id, "repeat_none"),
+                    callback_data=f"set_repeat_{rid}_none"
+                )],
+                [InlineKeyboardButton(
+                    text=await tr(user_id, "repeat_daily"),
+                    callback_data=f"set_repeat_{rid}_daily"
+                )],
+                [InlineKeyboardButton(
+                    text=await tr(user_id, "repeat_monthly"),
+                    callback_data=f"set_repeat_{rid}_monthly"
+                )],
+                [InlineKeyboardButton(
+                    text="⬅️ " + await tr(user_id, "back_btn"),
+                    callback_data=DynamicCallbacks.reminder_action("view", rid)
+                )],
+            ]
+        )
+        await safe_edit_text(callback.message, await tr(user_id, "ask_repeat"), reply_markup=kb)
+        await callback.answer()
+
+    elif action == "delete":
+        async with get_db() as session:
+            r = await get_reminder_by_id(session, rid, user_id)
+            if r:
+                await session.delete(r)
+                await session.commit()
+        await callback.answer(await tr(user_id, "reminder_deleted"))
+        await open_my_reminders(callback)
+
+
+@router.message(EditReminder.text)
+async def edit_text(message: types.Message, state: FSMContext):
+    if message.text.lower().strip() in ("отмена", "cancel"):
+        await state.clear()
+        await message.answer(await tr(message.from_user.id, "cancelled"))
+        return
+
+    data = await state.get_data()
+    rid = data.get("reminder_id")
+    if not rid:
+        await message.answer(await tr(message.from_user.id, "db_error"))
+        await state.clear()
+        return
+
+    async with get_db() as session:
+        r = await update_reminder_text(session, rid, message.from_user.id, message.text.strip())
+
+    if not r:
+        await message.answer(await tr(message.from_user.id, "not_found_or_no_access"))
+        await state.clear()
+        return
+
+    # Получаем ID предыдущего сообщения бота (с запросом "Введите текст")
+    prev_bot_msg_id = data.get("bot_message_id")
+
+    # Удаляем сообщение пользователя и предыдущее сообщение бота
+    if message.chat.type == "private":
+        try:
+            await message.delete()
+            if prev_bot_msg_id:
+                await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+        except Exception as e:
+            print(f"Ошибка при удалении: {e}")
+
+    back_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ " + await tr(message.from_user.id, "back_btn"),
+                                  callback_data=CallbackData.BACK_MAIN_REMINDER)]
+        ]
+    )
+
+    # Отправляем сообщение с результатом (оно НЕ удаляется)
+    await message.answer(await tr(message.from_user.id, "reminder_updated"), reply_markup=back_kb)
+    await state.clear()
+
+@router.message(EditReminder.datetime)
+async def edit_datetime(message: types.Message, state: FSMContext):
+    if message.text.lower().strip() in ("отмена", "cancel"):
+        await state.clear()
+        await message.answer(await tr(message.from_user.id, "cancelled"))
+        return
+
+    data = await state.get_data()
+    rid = data.get("reminder_id")
+    if not rid:
+        await message.answer(await tr(message.from_user.id, "db_error"))
+        await state.clear()
+        return
+
+    try:
+        new_due = datetime.strptime(message.text.strip(), "%Y-%m-%d %H:%M")
+    except ValueError:
+        suggest_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d") + " 10:00"
+        await message.answer(
+            await tr(message.from_user.id, "bad_due").replace("2025-09-22 10:00", suggest_date),
+            reply_markup=await cancel_kb(message.from_user.id)
+        )
+        return
+
+    async with get_db() as session:
+        r = await get_reminder_by_id(session, rid, message.from_user.id)
+        if r:
+            r.due = new_due
+            await session.commit()
+
+    # Получаем ID предыдущего сообщения бота
+    prev_bot_msg_id = data.get("bot_message_id")
+
+    # Удаляем сообщения
+    if message.chat.type == "private":
+        try:
+            await message.delete()
+            if prev_bot_msg_id:
+                await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+        except Exception as e:
+            print(f"Ошибка при удалении: {e}")
+
+    back_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="⬅️ " + await tr(message.from_user.id, "back_btn"),
+                callback_data=CallbackData.BACK_MAIN_REMINDER
+            )]
+        ]
+    )
+    await message.answer(await tr(message.from_user.id, "reminder_updated"), reply_markup=back_kb)
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("set_repeat_"))
+async def set_repeat(callback: CallbackQuery, state: FSMContext):
+    try:
+        _, _, rid, repeat = callback.data.split("_", 3)
+        rid = int(rid)
+    except Exception:
+        await callback.answer()
+        return
+
+    user_id = callback.from_user.id
+
+    async with get_db() as session:
+        r = await get_reminder_by_id(session, rid, user_id)
+        if not r:
+            await callback.answer(await tr(user_id, "not_found_or_no_access"))
+            return
+
+        r.repeat = repeat
+        await session.commit()
+
+    await callback.answer(await tr(user_id, "reminder_updated"))
+
+    # Показываем обновленную карточку напоминания
+    repeat_text = {
+        "none": await tr(user_id, "repeat_none"),
+        "daily": await tr(user_id, "repeat_daily"),
+        "monthly": await tr(user_id, "repeat_monthly")
+    }.get(repeat, repeat)
+
+    text = f"⏰ {r.text}\n🕒 {r.due}\n🔁 {repeat_text}"
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=await tr(user_id, "edit"),
+                                     callback_data=DynamicCallbacks.reminder_action("edit", rid)),
+                InlineKeyboardButton(text=await tr(user_id, "delete"),
+                                     callback_data=DynamicCallbacks.reminder_action("delete", rid)),
+            ],
+            [InlineKeyboardButton(text="⬅️ " + await tr(user_id, "back_btn"),
+                                  callback_data=CallbackData.MY_REMINDERS)]
+        ]
+    )
+    await safe_edit_text(callback.message, text, reply_markup=kb)
+# --- Создание пользовательских напоминаний ---
+@router.callback_query(F.data == CallbackData.ADD_REMINDER)
+async def start_add_reminder(callback: CallbackQuery, state: FSMContext):
+    sent_message = await callback.message.answer(
+        await tr(callback.from_user.id, "start_add"),
+        reply_markup=await cancel_kb(callback.from_user.id)
+    )
+
+    # Сохраняем ID первого сообщения бота
+    await state.update_data(bot_message_id=sent_message.message_id)
+    await state.set_state(AddReminder.text)
+    await callback.answer()
+
+@router.callback_query(F.data == CallbackData.BACK_MAIN_REMINDER)
+async def back_main_reminder(call: CallbackQuery, state: FSMContext):
+        await call.answer(text="")
+        """Возврат в главное меню"""
+        # 1. Сразу убираем "часики"
+        await call.answer()
+
+        try:
             await state.clear()
+            text = await tr(call.from_user.id, 'choose_action')
+            markup = await main_menu(call.from_user.id)
+            await call.send_message(text=text, reply_markup=markup)
+        except Exception as e:
+            print(f"❌ Ошибка в back_main: {e}")
             try:
-                await message.answer("✅ Время уведомлений изменено")
+                await call.answer("❌ Ошибка перехода в меню", show_alert=True)
             except:
                 pass
 
-    except Exception as e:
-        print(f"❌ Критическая ошибка в set_notify_time_handler: {e}")
+
+@router.message(AddReminder.text)
+async def process_text(message: types.Message, state: FSMContext):
+    if message.text.lower().strip() in ("отмена", "cancel"):
+        await state.clear()
+        await message.answer(await tr(message.from_user.id, "process_cancelled"))
+        return
+
+    text = message.text.strip()
+    if not text:
+        sent_message = await message.answer(await tr(message.from_user.id, "text_only_please"),
+                                            reply_markup=await cancel_kb(message.from_user.id))
+        if message.chat.type == "private":
+            try:
+                await message.delete()
+                await sent_message.delete()
+            except Exception as e:
+                print(f"Ошибка при удалении: {e}")
+        return
+
+    # Сначала сохраняем текст в state
+    await state.update_data(text=text)
+
+    # Получаем ID предыдущего сообщения бота (если есть)
+    data = await state.get_data()
+    prev_bot_msg_id = data.get("bot_message_id")
+
+    # Удаляем сообщение пользователя и предыдущее сообщение бота
+    if message.chat.type == "private":
         try:
-            await state.clear()
-            error_text = await tr(user_id, 'system_error')
-            await message.answer(error_text)
-        except Exception as inner_e:
-            print(f"❌ Критическая ошибка в обработке ошибки: {inner_e}")
+            await message.delete()
+            if prev_bot_msg_id:
+                await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+        except Exception as e:
+            print(f"Ошибка при удалении: {e}")
+
+    # Генерируем пример: сегодня + 7 дней в 10:00
+    suggest_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d") + " 10:00"
+
+    # Отправляем новое сообщение с динамическим примером
+    ask_due_text = await tr(message.from_user.id, "ask_due")
+    ask_due_text = ask_due_text.replace("2025-09-22 10:00", suggest_date)
+
+    sent_message = await message.answer(ask_due_text, reply_markup=await cancel_kb(message.from_user.id))
+
+    # Сохраняем ID нового сообщения бота
+    await state.update_data(bot_message_id=sent_message.message_id)
+    await state.set_state(AddReminder.datetime)
 
 
-async def reminder_debt_actions(debt_id: int, page: int, user_id: int) -> InlineKeyboardMarkup:
-    """Кнопки для карточки долга в напоминаниях"""
+@router.message(AddReminder.datetime)
+async def process_due(message: types.Message, state: FSMContext):
+    if message.text.lower().strip() in ("отмена", "cancel"):
+        await state.clear()
+        await message.answer(await tr(message.from_user.id, "process_cancelled"))
+        return
+
     try:
-        return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text=await tr(user_id, 'edit'),
-                callback_data=f'edit_{debt_id}_{page}'
-            )],
-            [
-                InlineKeyboardButton(
-                    text=await tr(user_id, 'close'),
-                    callback_data=f'close_{debt_id}_{page}'
-                ),
-                InlineKeyboardButton(
-                    text=await tr(user_id, 'extend'),
-                    callback_data=f'extend_{debt_id}_{page}'
-                ),
-                InlineKeyboardButton(
-                    text=await tr(user_id, 'delete'),
-                    callback_data=f'del_{debt_id}_{page}'
-                )
-            ],
-            [InlineKeyboardButton(
-                text=await tr(user_id, 'to_menu'),
-                callback_data='back_main'
-            )]
-        ])
-    except Exception as e:
-        print(f"❌ Ошибка в reminder_debt_actions: {e}")
-        # Возвращаем базовую клавиатуру в случае ошибки
+        due = datetime.strptime(message.text.strip(), "%Y-%m-%d %H:%M")
+    except ValueError:
+        # Генерируем пример: сегодня + 7 дней в 10:00
+        suggest_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d") + " 10:00"
+
+        # ← ИСПРАВИТЬ ЭТУ СТРОКУ:
+        bad_due_text = await tr(message.from_user.id, "bad_due")  # Сначала await
+        bad_due_text = bad_due_text.replace("2025-09-22 10:00", suggest_date)  # Потом replace
+
+        await message.answer(
+            bad_due_text,
+            reply_markup=await cancel_kb(message.from_user.id)
+        )
+        return
+
+    # Сначала сохраняем дату в state
+    await state.update_data(due=due)
+
+    # Получаем ID предыдущего сообщения бота
+    data = await state.get_data()
+    prev_bot_msg_id = data.get("bot_message_id")
+
+    # Удаляем сообщение пользователя и предыдущее сообщение бота
+    if message.chat.type == "private":
         try:
-            return InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="В меню",
-                    callback_data='back_main'
-                )]
-            ])
-        except:
-            return InlineKeyboardMarkup(inline_keyboard=[])
+            await message.delete()
+            if prev_bot_msg_id:
+                await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_bot_msg_id)
+        except Exception as e:
+            print(f"Ошибка при удалении: {e}")
+
+    # Отправляем следующее сообщение
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=await tr(message.from_user.id, "repeat_none"),
+                                  callback_data=CallbackData.REPEAT_NO)],
+            [InlineKeyboardButton(text=await tr(message.from_user.id, "repeat_daily"),
+                                  callback_data=CallbackData.REPEAT_DAILY)],
+            [InlineKeyboardButton(text=await tr(message.from_user.id, "repeat_monthly"),
+                                  callback_data=CallbackData.REPEAT_MONTHLY)],
+            [InlineKeyboardButton(text="⬅️ " + await tr(message.from_user.id, "back_btn"),
+                                  callback_data=CallbackData.BACK_MAIN_REMINDER)],
+        ]
+    )
+    sent_message = await message.answer(await tr(message.from_user.id, "ask_repeat"), reply_markup=kb)
+
+    # Сохраняем ID нового сообщения бота
+    await state.update_data(bot_message_id=sent_message.message_id)
+    await state.set_state(AddReminder.repeat)
+
+@router.callback_query(lambda c: c.data.startswith("repeat_"))
+async def process_repeat_cb(callback: CallbackQuery, state: FSMContext):
+    repeat_map = {
+        CallbackData.REPEAT_NO: "none",
+        CallbackData.REPEAT_DAILY: "daily",
+        CallbackData.REPEAT_MONTHLY: "monthly",
+    }
+    repeat = repeat_map.get(callback.data, "none")
+
+    data = await state.get_data()
+    text = data.get("text")
+    due = data.get("due")
+
+    if not text or not due:
+        await state.clear()
+        await callback.answer(await tr(callback.from_user.id, "db_error"))
+        return
+
+    async with get_db() as session:
+        await add_reminder(session, user_id=callback.from_user.id, text=text, due=due, repeat=repeat)
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="⬅️ " + await tr(callback.from_user.id, "back_btn"),
+                callback_data=CallbackData.BACK_MAIN_REMINDER
+            )]
+        ]
+    )
+
+    repeat_human = {
+        "none": await tr(callback.from_user.id, "repeat_none"),
+        "daily": await tr(callback.from_user.id, "repeat_daily"),
+        "monthly": await tr(callback.from_user.id, "repeat_monthly")
+    }.get(repeat, repeat)
+
+    msg = await tr(
+        callback.from_user.id,
+        "reminder_created",
+        text=text,
+        datetime=due,
+        repeat=repeat_human
+    )
+
+    await safe_edit_text(callback.message, msg, reply_markup=kb)
+
+    await state.clear()
+    await callback.answer()
+
+
+async def debt_reminders_kb(user_id: int) -> InlineKeyboardMarkup:
+    """
+    Динамическая клавиатура для меню долговых напоминаний.
+    Если уведомления включены — показываем кнопку "Отключить",
+    если выключены — "Включить".
+    """
+    user_data = await get_user_data(user_id)
+    enabled = user_data.get("notify_time") is not None
+
+    enable_text = await tr(user_id, "enable_debt")
+    disable_text = await tr(user_id, "disable_debt")
+
+    toggle_text = disable_text if enabled else enable_text
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=toggle_text, callback_data=CallbackData.TOGGLE_DEBT_REMINDERS)],
+            [InlineKeyboardButton(text="⚙ " + await tr(user_id, "set_time"),
+                                  callback_data=CallbackData.SETUP_REMINDER_TIME)],
+            [InlineKeyboardButton(text="⬅️ " + await tr(user_id, "back_btn"),
+                                  callback_data=CallbackData.REMINDERS_MENU)],
+        ]
+    )
+    return kb
+
+
+
+
+
+
+
+@router.message(Command("time"))
+async def check_time(message: types.Message):
+    """Показать текущее время в разных зонах"""
+    utc_now = datetime.now(pytz.UTC)
+    tashkent_tz = pytz.timezone('Asia/Tashkent')
+    tashkent_now = datetime.now(tashkent_tz)
+    local_now = datetime.now()
+
+    text = f"""
+🕐 **Проверка времени**
+
+🌍 UTC: `{utc_now.strftime('%Y-%m-%d %H:%M:%S')}`
+🇺🇿 Ташкент (UTC+5): `{tashkent_now.strftime('%Y-%m-%d %H:%M:%S')}`
+💻 Сервер: `{local_now.strftime('%Y-%m-%d %H:%M:%S')}`
+
+✅ Бот работает по времени: **{tashkent_tz}**
+    """
+    await message.answer(text, parse_mode="Markdown")
+
+
+@router.message(Command("test_currency"))
+async def test_currency_notification(message: Message):
+    """Установить валютное уведомление через 2 минуты"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Эта команда доступна только администраторам")
+        return
+
+    from app.utils.scheduler import scheduler
+    from app.database.crud import set_user_currency_time
+    from app.database.connection import get_db
+
+    import pytz
+
+    user_id = message.from_user.id
+    job_id = f'user_currency_{user_id}'
+
+    # Время по UTC+5 (Ташкент)
+    tashkent_tz = pytz.timezone('Asia/Tashkent')
+    now_utc5 = datetime.now(tashkent_tz)
+    test_time = now_utc5 + timedelta(minutes=2)
+    time_str = test_time.strftime("%H:%M")
+
+    try:
+        # Обновляем БД
+        async with get_db() as session:
+            await set_user_currency_time(session, user_id, time_str)
+
+        # Перезапускаем все задачи чтобы применить изменения
+        from app.utils.scheduler import schedule_all_reminders
+        await schedule_all_reminders()
+
+        await message.answer(
+            f"✅ Валютное уведомление установлено на <b>{time_str}</b>\n"
+            f"⏳ Ждите ~2 минуты\n\n"
+            f"Задача: {job_id}"
+        )
+
+        # Проверяем что задача добавлена
+        job = scheduler.scheduler.get_job(job_id)
+        print(f"✅ Тест валютного уведомления: {user_id} -> {time_str}")
+        print(f"📋 Задача в scheduler: {job is not None}")
+        if job:
+            print(f"   Next run: {job.next_run_time}")
+            print(f"   Trigger: {job.trigger}")
+
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка теста: {e}")
+
+
+
+@router.message(Command("check_jobs"))
+async def check_jobs(message: Message):
+    from app.utils.scheduler import scheduler
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Эта команда доступна только администраторам")
+        return
+
+    currency_jobs = [j for j in scheduler.scheduler.get_jobs() if 'currency' in j.id]
+
+    text = f"💱 Валютных задач: {len(currency_jobs)}\n\n"
+    for job in currency_jobs[:5]:  # Показываем только первые 5
+        text += f"• {job.id}\n  Next: {job.next_run_time}\n\n"
+
+    await message.answer(text)
+
+async def check_reminders(bot):
+    now = datetime.now().replace(second=0, microsecond=0)  # текущее время без секунд
+    async with get_db() as session:
+        result = await session.execute(
+            select(Reminder).where(Reminder.due <= now)
+        )
+        reminders = result.scalars().all()
+
+        for r in reminders:
+            try:
+                kb = await menu_button(r.user_id)  # формируем клавиатуру
+                await bot.send_message(
+                    r.user_id,
+                    f"⏰ {r.text}",
+                    reply_markup=kb
+                )
+                await session.delete(r)  # удаляем, если одноразовое
+            except Exception as e:
+                print(f"[ERROR] Не удалось отправить {r.id}: {e}")
+
+        await session.commit()
+

@@ -42,15 +42,8 @@ async def debts_list_keyboard_paginated(debts: list, user_id: int, page: int = 0
     if nav_buttons:
         keyboard.append(nav_buttons)
 
-    # Кнопка возврата в меню
-    keyboard.append([
-        InlineKeyboardButton(
-            text=await tr(user_id, 'to_menu'),
-            callback_data='back_main'
-        )
-    ])
-
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+#тут убрали кнопку
 
 
 async def debts_list_keyboard(debts: list, user_id: int) -> InlineKeyboardMarkup:

@@ -2,10 +2,10 @@ import asyncio
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update, and_, func
+from sqlalchemy import update, and_, func, delete
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
-from .models import User, Debt, ScheduledMessage
+from .models import *
 from .connection import get_db
 
 
@@ -378,7 +378,8 @@ async def get_all_users() -> List[Dict[str, Any]]:
                 users.append({
                     'user_id': user.user_id,
                     'lang': user.lang,
-                    'notify_time': user.notify_time
+                    'notify_time': user.notify_time,
+                    'currency_notify_time': user.currency_notify_time  # ✅ ДОБАВЬ ЭТУ СТРОКУ
                 })
             return users
     except Exception as e:
@@ -533,3 +534,448 @@ async def execute_query_safely(query_func, *args, **kwargs):
                 continue
             else:
                 raise e
+
+async def add_reminder(session: AsyncSession, user_id: int, text: str, due: datetime, repeat: str = "none"):
+    reminder = Reminder(
+        user_id=user_id,
+        text=text,
+        due=due,
+        repeat=repeat,
+        is_active=True,
+        created_at=datetime.utcnow()
+    )
+    session.add(reminder)
+    await session.commit()
+    await session.refresh(reminder)
+    return reminder
+
+
+
+# 🔍 Получить одно напоминание по id
+async def get_reminder(session: AsyncSession, reminder_id: int):
+    result = await session.execute(
+        select(Reminder).where(Reminder.id == reminder_id)
+    )
+    return result.scalar_one_or_none()
+
+
+# 🗑 Удалить напоминание
+async def delete_reminder(reminder_id: int):
+    """Удалить напоминание (soft delete)"""
+    async with get_db() as session:
+        try:
+            # Получаем напоминание
+            reminder = await session.get(Reminder, reminder_id)
+            if not reminder:
+                print(f"⚠️ Напоминание {reminder_id} не найдено")
+                return False
+
+            # Деактивируем
+            reminder.is_active = False
+            await session.commit()
+
+            print(f"✅ Напоминание {reminder_id} деактивировано")
+            return True
+
+        except Exception as e:
+            print(f"❌ Ошибка удаления напоминания {reminder_id}: {e}")
+            await session.rollback()
+            return False
+
+
+# ✏️ Обновить напоминание
+async def update_reminder(session: AsyncSession, reminder_id: int, **kwargs) -> int:
+    result = await session.execute(
+        update(Reminder)
+        .where(Reminder.id == reminder_id)
+        .values(**kwargs)
+    )
+    await session.commit()
+    return result.rowcount
+
+
+
+
+# Включить напоминания (ставим дефолтное время)
+async def enable_debt_reminders(session, user_id: int, default_time: str = "09:00"):
+    user = await get_or_create_user(user_id, session)
+    user.notify_time = default_time
+    await session.commit()
+
+# Выключить напоминания (ставим None)
+async def disable_debt_reminders(session, user_id: int):
+    user = await get_or_create_user(user_id, session)
+    user.notify_time = None
+    await session.commit()
+
+# Установить конкретное время
+async def set_debt_reminder_time(session, user_id: int, time_str: str):
+    user = await get_or_create_user(user_id, session)
+    user.notify_time = time_str
+    await session.commit()
+
+from sqlalchemy.future import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, time, timedelta
+from .models import Reminder, User
+
+
+
+
+
+async def get_user_reminders(session: AsyncSession, user_id: int):
+    result = await session.execute(
+        select(Reminder).where(
+            Reminder.user_id == user_id,
+            Reminder.is_active == True,
+            getattr(Reminder, "system", False) == False  # если поля system нет, False == False
+        ).order_by(Reminder.id.desc())
+    )
+    return result.scalars().all()
+
+# Получить одно напоминание по id
+async def get_reminder_by_id(session: AsyncSession, reminder_id: int, user_id: int):
+    result = await session.execute(
+        select(Reminder).where(Reminder.id == reminder_id, Reminder.user_id == user_id)
+    )
+    return result.scalars().first()
+
+# Обновить текст напоминания
+async def update_reminder_text(session: AsyncSession, reminder_id: int, user_id: int, new_text: str):
+    r = await get_reminder_by_id(session, reminder_id, user_id)
+    if r:
+        r.text = new_text
+        await session.commit()
+        await session.refresh(r)
+    return r
+
+# Создать системное валютное напоминание (07:00 или 17:00)
+async def create_currency_reminder(session: AsyncSession, user_id: int, hour: int):
+    # Удалим предыдущие системные валютные напоминания
+    await delete_currency_reminders(session, user_id)
+
+    now = datetime.now()
+    first_due = datetime.combine(now.date(), time(hour=hour, minute=0))
+    if first_due <= now:
+        first_due += timedelta(days=1)
+
+    # Поле system=True — чтобы не показывать в списке
+    r = Reminder(
+        user_id=user_id,
+        text="Курс валют",
+        due=first_due,
+        repeat="daily",
+        is_active=True
+    )
+    # Если в модели есть колонка system — выставим
+    if hasattr(r, "system"):
+        setattr(r, "system", True)
+
+    session.add(r)
+    await session.commit()
+    await session.refresh(r)
+    return r
+
+# Отключить (удалить) системные валютные напоминания
+async def delete_currency_reminders(session: AsyncSession, user_id: int):
+    # Если в модели есть колонка system — фильтруем по ней
+    if hasattr(Reminder, "system"):
+        await session.execute(
+            delete(Reminder).where(
+                Reminder.user_id == user_id,
+                Reminder.is_active == True,
+                Reminder.repeat == "daily",
+                Reminder.text == "Курс валют",
+                Reminder.system == True
+            )
+        )
+    else:
+        # Фоллбек, если поля system нет: ориентируемся по тексту и repeat
+        await session.execute(
+            delete(Reminder).where(
+                Reminder.user_id == user_id,
+                Reminder.is_active == True,
+                Reminder.repeat == "daily",
+                Reminder.text == "Курс валют"
+            )
+        )
+    await session.commit()
+
+async def set_user_currency_time(session, user_id: int, value: str | None):
+    user = await session.get(User, user_id)
+    if not user:
+        print('Нет юзера')
+        return None
+    user.currency_notify_time = value
+    await session.commit()
+    await session.refresh(user)
+    print(vars(user))
+    return user
+
+async def get_user_currency_time(session, user_id: int) -> str | None:
+    user = await session.get(User, user_id)
+    if not user:
+        return None
+    return user.currency_notify_time
+
+async def get_due_reminders(now):
+    start = now.replace(second=0, microsecond=0)
+    end = start + timedelta(minutes=1)
+
+    async with get_db() as session:
+        result = await session.execute(
+            select(Reminder).where(
+                Reminder.due >= start,
+                Reminder.due < end,
+                Reminder.repeat == "none",
+                Reminder.is_active.is_(True)
+            )
+        )
+        reminders = result.scalars().all()
+        print(f"📋 Найдено {len(reminders)} одноразовых активных напоминаний")
+        return [{
+            'id': r.id,
+            'user_id': r.user_id,
+            'text': r.text,
+            'due': r.due,
+            'repeat': r.repeat,
+            'is_active': r.is_active
+        } for r in reminders]
+
+async def get_due_repeating_reminders(now):
+    async with get_db() as session:
+        result = await session.execute(
+            select(Reminder).where(
+                Reminder.due <= now,
+                Reminder.repeat != "none",
+                Reminder.is_active == True  # ← Добавьте эту проверку
+            )
+        )
+        reminders = result.scalars().all()
+        return [{
+            'id': r.id,
+            'user_id': r.user_id,
+            'text': r.text,
+            'due': r.due,
+            'repeat': r.repeat,
+            'is_active': r.is_active
+        } for r in reminders]
+# обновить дату напоминания
+async def update_reminder_due(reminder_id, new_due):
+    async with get_db() as session:
+        reminder = await session.get(Reminder, reminder_id)
+        if reminder:
+            reminder.due = new_due
+            await session.commit()
+
+
+
+# получить валютные настройки пользователя
+async def get_user_currency_settings(user_id):
+    async with get_db() as session:
+        user = await session.get(User, user_id)
+        if user and user.currency_base and user.currency_quote:
+            return {"base": user.currency_base, "quote": user.currency_quote}
+        return None
+
+
+async def create_debts_from_ai(debts_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Создать несколько долгов (до 10) на основе JSON, полученного от ИИ.
+    Ожидает список словарей с ключами:
+    user_id, person, amount, currency, direction, date, due, comment
+    """
+    results: List[Dict[str, Any]] = []
+
+    async with get_db() as session:
+        try:
+            # Собираем все объекты перед commit
+            debts_to_add = []
+
+            for idx, debt_data in enumerate(debts_data[:10], start=1):
+                # Проверим, что пользователь существует
+                user = await session.get(User, debt_data["user_id"])
+                if not user:
+                    user = User(user_id=debt_data["user_id"])
+                    session.add(user)
+
+                new_debt = Debt(
+                    user_id=debt_data["user_id"],
+                    person=debt_data["person"],
+                    amount=debt_data["amount"],
+                    currency=debt_data["currency"],
+                    direction=debt_data["direction"],
+                    date=debt_data.get("date", datetime.utcnow().date().isoformat()),
+                    due=debt_data["due"],
+                    comment=debt_data.get("comment", "")
+                )
+                debts_to_add.append(new_debt)
+                session.add(new_debt)
+
+            # 🔧 Один commit для всех долгов
+            await session.commit()
+
+            # Теперь у всех долгов есть id
+            for debt in debts_to_add:
+                results.append({
+                    'id': debt.id,
+                    'user_id': debt.user_id,
+                    'person': debt.person,
+                    'amount': debt.amount,
+                    'currency': debt.currency,
+                    'direction': debt.direction,
+                    'date': debt.date,
+                    'due': debt.due,
+                    'comment': debt.comment,
+                    'closed': debt.closed
+                })
+
+            print(f"✅ Добавлено долгов: {len(results)}")
+            return results
+
+        except Exception as e:
+            print(f"❌ Ошибка при создании долгов через ИИ: {e}")
+            await session.rollback()
+            return []
+
+async def count_user_debts_today(user_id: int) -> int:
+    """Подсчитывает количество долгов, созданных пользователем сегодня"""
+    async with get_db() as session:
+        today = datetime.now().date().isoformat()
+        result = await session.execute(
+            select(func.count(Debt.id)).where(
+                Debt.user_id == user_id,
+                Debt.date == today
+            )
+        )
+        return result.scalar() or 0
+
+from datetime import datetime
+from sqlalchemy import select, func
+from app.database.models import Referral, User
+from app.database.connection import get_db
+
+
+# Создать новую рефералку
+async def create_referral(code: str, description: str | None = None) -> dict | None:
+    async with get_db() as session:
+        try:
+            referral = Referral(
+                code=code,
+                description=description,
+                created_at=datetime.utcnow(),
+                is_active=True
+            )
+            session.add(referral)
+            await session.commit()
+            await session.refresh(referral)
+            return {
+                "id": referral.id,
+                "code": referral.code,
+                "description": referral.description,
+                "is_active": referral.is_active,
+                "created_at": referral.created_at
+            }
+        except Exception as e:
+            print(f"❌ Ошибка при создании рефералки: {e}")
+            await session.rollback()
+            return None
+
+
+# Найти рефералку по коду
+async def get_referral_by_code(code: str) -> dict | None:
+    async with get_db() as session:
+        result = await session.execute(
+            select(Referral).where(
+                Referral.code == code,
+                Referral.is_active.is_(True)
+            )
+        )
+        referral = result.scalar_one_or_none()
+        if referral:
+            return {
+                "id": referral.id,
+                "code": referral.code,
+                "description": referral.description,
+                "is_active": referral.is_active,
+                "created_at": referral.created_at
+            }
+        return None
+
+
+# Получить список всех рефералок
+async def get_referrals(active_only: bool = True) -> list[dict]:
+    async with get_db() as session:
+        query = select(Referral)
+        if active_only:
+            query = query.where(Referral.is_active.is_(True))
+        result = await session.execute(query)
+        referrals = result.scalars().all()
+        return [{
+            "id": r.id,
+            "code": r.code,
+            "description": r.description,
+            "is_active": r.is_active,
+            "created_at": r.created_at
+        } for r in referrals]
+
+
+# Деактивировать рефералку
+async def deactivate_referral(referral_id: int) -> bool:
+    async with get_db() as session:
+        referral = await session.get(Referral, referral_id)
+        if referral:
+            referral.is_active = False
+            await session.commit()
+            return True
+        return False
+
+
+# Привязать пользователя к рефералке
+async def assign_user_to_referral(user_id: int, referral_id: int) -> bool:
+    async with get_db() as session:
+        user = await session.get(User, user_id)
+        referral = await session.get(Referral, referral_id)
+        if user and referral:
+            user.referral_id = referral.id
+            await session.commit()
+            return True
+        return False
+
+
+# Получить статистику по рефералке
+async def get_referral_stats(referral_id: int) -> dict:
+    async with get_db() as session:
+        result = await session.execute(
+            select(func.count(User.user_id)).where(User.referral_id == referral_id)
+        )
+        count = result.scalar() or 0
+        return {"referral_id": referral_id, "users_count": count}
+
+async def get_referral_by_id(referral_id: int) -> dict | None:
+    async with get_db() as session:
+        result = await session.execute(
+            select(Referral).where(Referral.id == referral_id)
+        )
+        referral = result.scalar_one_or_none()
+        if not referral:
+            return None
+        return {
+            "id": referral.id,
+            "code": referral.code,
+            "description": referral.description,
+            "is_active": referral.is_active,
+            "created_at": referral.created_at,
+        }
+
+async def activate_referral(referral_id: int) -> bool:
+    async with get_db() as session:
+        result = await session.execute(
+            select(Referral).where(Referral.id == referral_id)
+        )
+        referral = result.scalar_one_or_none()
+        if not referral:
+            return False
+        referral.is_active = True
+        await session.commit()
+        return True
